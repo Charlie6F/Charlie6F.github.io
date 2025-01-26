@@ -1,1 +1,1 @@
-[page](https://github.com/Charlie6F/Charlie6F.github.io/deployments/github-pages)
+[page](https://charlie6f.github.io/)
