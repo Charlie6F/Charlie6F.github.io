@@ -1,6 +1,6 @@
 {
-    "name": "movs",
-    "short_name": "movs",
+    "name": "MG",
+    "short_name": "mg",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#FFFFFF",
