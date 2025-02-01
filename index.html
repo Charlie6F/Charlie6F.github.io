@@ -1,39 +1,231 @@
 <!DOCTYPE html>
 <html>
-
 <head>
-  <base href="/">
-  <meta charset="UTF-8">
-  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="">
+    <base href="/">
+    <meta charset="UTF-8">
+    <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+    <meta name="description" content="">
 
-  <!-- iOS meta tags & icons -->
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="MG">
-  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+    <style>
+        #loading-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(255, 255, 255, 0.95);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            transition: opacity 0.5s ease-out;
+        }
 
-  <!-- Favicon -->
-  <link rel="icon" type="image/png" href="favicon.png" />
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
 
-  <!-- Flet specific -->
-  <meta name="flet-route-url-strategy" content="path">
-  <meta name="flet-web-pyodide" content="true">
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
 
-  <title>MG</title>
-  <link rel="manifest" href="manifest.json">
+        .hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
 
-  <script>
-    var webRenderer = "canvaskit";
-    var useColorEmoji = "false" == "true";
-    var pythonModuleName = "main";
-  </script>
+       .refresh-button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 10px;
+            opacity: 0;
+            transition: opacity 0.5s ease-in;
+        }
 
-  <script src="python.js"></script>
+        .refresh-button.visible {
+            opacity: 1;
+        }
+
+        .error-message {
+            color: #721c24;
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            padding: 1rem;
+            border-radius: 4px;
+            text-align: center;
+            opacity: 0;
+            transition: opacity 0.5s ease-in;
+        }
+
+        .error-message.visible {
+            opacity: 1;
+        }
+    </style>
+
+    <meta name="flet-route-url-strategy" content="path">
+    <meta name="flet-web-pyodide" content="true">
+
+    <title>MG</title>
+    <link rel="manifest" href="manifest.json">
+
+    <script>
+        var webRenderer = "canvaskit";
+        var useColorEmoji = "false" == "true";
+        var pythonModuleName = "main";
+
+        // State tracking with initialization guards
+        let state = {
+            pythonInitialized: false,
+            pageLoaded: false,
+            initializationTimeout: null,
+            loadingScreenRemoved: false,
+            initializationCount: 0,
+            maxInitializationAttempts: 1
+        };
+
+        let loadingContainerCreated = false;
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            if (!loadingContainerCreated) {
+                const loadingContainer = document.createElement('div');
+                loadingContainer.id = 'loading-container';
+                
+                const spinner = document.createElement('div');
+                spinner.className = 'spinner';
+                
+                loadingContainer.appendChild(spinner);
+                document.body.appendChild(loadingContainer);
+                loadingContainerCreated = true;
+
+                // Set initialization timeout
+                state.initializationTimeout = setTimeout(checkInitializationStatus, 15000);
+            }
+        });
+
+        // Store original console methods
+        const originalConsole = {
+            log: console.log,
+            info: console.info,
+            warn: console.warn,
+            error: console.error
+        }; 
+
+        function removeLoadingScreen() {
+            if (state.loadingScreenRemoved) {
+                return; // Prevent multiple removal attempts
+            }
+
+            const loadingContainer = document.getElementById('loading-container');
+            if (loadingContainer && !loadingContainer.classList.contains('hidden')) {
+                console.log('Removing loading screen (first time only)...');
+                loadingContainer.classList.add('hidden');
+                setTimeout(() => {
+                    loadingContainer.remove();
+                }, 500); 
+                state.loadingScreenRemoved = true;
+            }
+        }
+
+        function showErrorWithDelay() {
+            const loadingContainer = document.getElementById('loading-container');
+            if (loadingContainer && !state.loadingScreenRemoved) {
+                // Create error message container
+                const errorMessage = document.createElement('div');
+                errorMessage.className = 'error-message';
+                errorMessage.textContent = 'Initialization taking longer than expected. The app may still work normally, please wait.';
+                
+                // Create refresh button
+                const retryButton = document.createElement('button');
+                retryButton.className = 'refresh-button';
+                retryButton.textContent = 'Refresh Page';
+                retryButton.onclick = () => window.location.reload();
+                
+                // Replace spinner with new elements
+                loadingContainer.innerHTML = '';
+                loadingContainer.appendChild(errorMessage);
+                loadingContainer.appendChild(retryButton);
+                
+                // Show error message with delay
+                setTimeout(() => {
+                    errorMessage.classList.add('visible');
+                }, 1000); // Show error after 1 second
+                
+                // Show refresh button with additional delay
+                setTimeout(() => {
+                    retryButton.classList.add('visible');
+                }, 170000); // Show refresh button after 2 minutes 50 seconds
+            }
+        }
+
+        function checkInitializationStatus() {
+            if (state.pythonInitialized && !state.loadingScreenRemoved) {
+                removeLoadingScreen();
+                return;
+            }
+
+            if (state.initializationCount >= state.maxInitializationAttempts) {
+                console.warn('Maximum initialization attempts reached');
+                return;
+            }
+
+            showErrorWithDelay();
+        }
+
+        function processConsoleMessage(args) {
+            const message = Array.from(args).join(' ').toLowerCase();
+            
+            // Check for initialization messages with guard
+            if (message.includes('python engine initialized')) {
+                if (state.initializationCount < state.maxInitializationAttempts) {
+                    state.pythonInitialized = true;
+                    state.initializationCount++;
+                    
+                    if (!state.loadingScreenRemoved) {
+                        removeLoadingScreen();
+                    }
+                }
+            }
+            
+            if (message.includes('page loaded')) {
+                state.pageLoaded = true;
+            }
+        }
+
+        // Console interceptors
+        console.log = function(...args) {
+            originalConsole.log.apply(console, args);
+            processConsoleMessage(args);
+        };
+
+        console.info = function(...args) {
+            originalConsole.info.apply(console, args);
+            processConsoleMessage(args);
+        };
+
+        console.warn = function(...args) {
+            originalConsole.warn.apply(console, args);
+            processConsoleMessage(args);
+        };
+
+        console.error = function(...args) {
+            originalConsole.error.apply(console, args);
+            processConsoleMessage(args);
+        };
+    </script>
+
+    <script src="python.js"></script>
 </head>
-
 <body>
-  <script src="flutter_bootstrap.js" async></script>
+    <script src="flutter_bootstrap.js" async></script>
 </body>
-
 </html>
