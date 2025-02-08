@@ -9,7 +9,7 @@ main = "_worker.js"
 # This creates the ASSETS binding
 [assets]
 worker_compat = true
-bucket = "./"
+directory = "./"
 
 [build]
 command = "npm install"
