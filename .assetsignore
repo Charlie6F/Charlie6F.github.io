@@ -1,1 +1,3 @@
+.git/
 _worker.js
+node_modules/
