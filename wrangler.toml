@@ -2,10 +2,11 @@
 name = "nexu"
 compatibility_date = "2024-02-08"
 
-# Static asset handling
+# Worker configuration
+main = "_worker.js"
+
 [site]
-bucket = "./"  # Serves files from root directory
-entry-point = "functions"  # Worker functions directory
+bucket = "./"
 
 [build]
 command = "npm install"
@@ -13,6 +14,5 @@ command = "npm install"
 [build.upload]
 external_node_modules = ["jsdom"]
 
-# Environment variables
 [vars]
 ENVIRONMENT = "production"
