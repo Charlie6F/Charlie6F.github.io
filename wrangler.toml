@@ -6,7 +6,16 @@ compatibility_flags = ["nodejs_compat"]  # Add this line to enable Node.js compa
 # Worker configuration
 main = "_worker.js"
 
-assets = { directory = "./" }
+# Assets binding configuration - this is crucial
+[build]
+command = "" # Leave empty if no build step is needed
+[build.upload]
+format = "service-worker"
+
+# This creates the ASSETS binding
+[assets]
+worker_compat = true
+bucket = "./"
 
 [build]
 command = "npm install"
