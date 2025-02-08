@@ -1,5 +1,13 @@
 {
+  "name": "nexu",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy"
+  },
   "dependencies": {
     "jsdom": "^22.1.0"
+  },
+  "devDependencies": {
+    "wrangler": "^3.107.3"
   }
 }

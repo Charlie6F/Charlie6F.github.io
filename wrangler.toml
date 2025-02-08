@@ -1,4 +1,18 @@
 #:schema node_modules/wrangler/config-schema.json
 name = "nexu"
-compatibility_date = "2025-01-25"
-assets = { directory = "./" }
+compatibility_date = "2024-02-08"
+
+# Static asset handling
+[site]
+bucket = "./"  # Serves files from root directory
+entry-point = "functions"  # Worker functions directory
+
+[build]
+command = "npm install"
+
+[build.upload]
+external_node_modules = ["jsdom"]
+
+# Environment variables
+[vars]
+ENVIRONMENT = "production"
