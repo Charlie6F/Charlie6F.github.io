@@ -1,5 +1,5 @@
 // functions/_middleware.js
-import { JSDOM } from 'jsdom';
+import { parseHTML } from 'linkedom';
 
 const ALLOWED_ORIGINS = [
     'https://bore.pub',
@@ -58,8 +58,7 @@ class DownloadFormSubmitter {
 
     extractFormData(htmlContent) {
         try {
-            const dom = new JSDOM(htmlContent);
-            const document = dom.window.document;
+            const { document } = parseHTML(htmlContent);
             const form = document.querySelector('form');
             const formData = {};
             
