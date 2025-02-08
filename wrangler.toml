@@ -6,12 +6,6 @@ compatibility_flags = ["nodejs_compat"]  # Add this line to enable Node.js compa
 # Worker configuration
 main = "_worker.js"
 
-# Assets binding configuration - this is crucial
-[build]
-command = "" # Leave empty if no build step is needed
-[build.upload]
-format = "service-worker"
-
 # This creates the ASSETS binding
 [assets]
 worker_compat = true
@@ -21,7 +15,8 @@ bucket = "./"
 command = "npm install"
 
 [build.upload]
-external_node_modules = ["jsdom"]
+external_node_modules = ["linkedom"]
+format = "service-worker"
 
 [vars]
 ENVIRONMENT = "production"
