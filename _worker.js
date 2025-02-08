@@ -1,8 +1,9 @@
 import { parseHTML } from 'linkedom';
 
 class DownloadFormSubmitter {
-    constructor(verbose = false) {
+    constructor(verbose = false, devMode = false) {
         this.verbose = verbose;
+        this.devMode = devMode;
         this.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
@@ -10,6 +11,10 @@ class DownloadFormSubmitter {
             'Connection': 'keep-alive'
         };
         this.base_url = "https://downloadwella.com";
+        
+        if (this.devMode) {
+            console.warn('⚠️ WARNING: Running in development mode with relaxed SSL verification. Do not use in production!');
+        }
     }
 
     extractFileId(url) {
@@ -29,14 +34,35 @@ class DownloadFormSubmitter {
             return { url };
         }
 
-        const response = await fetch(url, {
-            headers: this.headers,
-        });
+        try {
+            const fetchOptions = {
+                headers: this.headers,
+            };
 
-        if (response.ok) {
-            return response;
+            // Only add insecure options in dev mode
+            if (this.devMode) {
+                fetchOptions.insecure = true;
+                fetchOptions.rejectUnauthorized = false;
+            }
+
+            const response = await fetch(url, fetchOptions);
+
+            if (response.ok) {
+                return response;
+            }
+            throw new Error(`Request failed with status ${response.status}`);
+        } catch (error) {
+            if (error.cause?.code === 'CERT_INVALID' && this.devMode) {
+                // Retry with relaxed SSL verification in dev mode
+                const response = await fetch(url, {
+                    headers: this.headers,
+                    insecure: true,
+                    rejectUnauthorized: false,
+                });
+                return response;
+            }
+            throw error;
         }
-        throw new Error(`Request failed with status ${response.status}`);
     }
 
     extractFormData(htmlContent) {
@@ -85,11 +111,10 @@ class DownloadFormSubmitter {
                 ...formData
             };
 
-            // Wait 2 seconds
             await new Promise(resolve => setTimeout(resolve, 2000));
 
             const submitUrl = new URL(formAction || '', this.base_url).href;
-            const response = await fetch(submitUrl, {
+            const fetchOptions = {
                 method: 'POST',
                 headers: {
                     ...this.headers,
@@ -99,7 +124,15 @@ class DownloadFormSubmitter {
                 },
                 body: new URLSearchParams(finalFormData).toString(),
                 redirect: 'follow'
-            });
+            };
+
+            // Add insecure options in dev mode
+            if (this.devMode) {
+                fetchOptions.insecure = true;
+                fetchOptions.rejectUnauthorized = false;
+            }
+
+            const response = await fetch(submitUrl, fetchOptions);
 
             if (response.ok) {
                 const finalUrl = response.url;
@@ -197,6 +230,7 @@ const apiRoutes = {
     '/api/download': async (request) => {
         const url = new URL(request.url);
         const downloadUrl = url.searchParams.get('url');
+        const devMode = url.searchParams.get('dev') === 'true';
         
         if (!downloadUrl) {
             return new Response(JSON.stringify({ error: 'Missing url parameter' }), {
@@ -206,18 +240,35 @@ const apiRoutes = {
         }
 
         try {
-            const downloader = new DownloadFormSubmitter(true);
+            const downloader = new DownloadFormSubmitter(true, devMode);
             const result = await downloader.submitForm(downloadUrl);
             return new Response(JSON.stringify(result), {
-                headers: { 'Content-Type': 'application/json' }
+                headers: { 
+                    'Content-Type': 'application/json',
+                    ...(devMode && { 'X-Dev-Mode': 'true' })
+                }
             });
         } catch (error) {
-            return new Response(JSON.stringify({ error: error.message }), {
-                status: 500,
-                headers: { 'Content-Type': 'application/json' }
+            console.error('Download error:', error);
+            
+            const errorMessage = {
+                error: 'Download failed',
+                details: error.message,
+                type: error.name,
+                url: downloadUrl,
+                devMode: devMode
+            };
+            
+            return new Response(JSON.stringify(errorMessage), {
+                status: 502,
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'X-Error-Type': 'download_failed',
+                    ...(devMode && { 'X-Dev-Mode': 'true' })
+                }
             });
         }
-    }
+    },
 };
 
 // Main worker
