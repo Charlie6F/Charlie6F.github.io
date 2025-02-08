@@ -114,17 +114,13 @@ class DownloadFormSubmitter {
 }
 
 const ALLOWED_ORIGINS = [
-    'https://bore.pub',
-    'http://bore.pub',
-    'http://bore.pub:8020',
-    'http://bore.pub:7259',
+    'https://nexu.charles06f.workers.dev',
+    'https://nexu.name.ng',
     'https://nkiri.com',
     'https://optimum-current-hawk.ngrok-free.app',
     'https://charlie6f.github.io',
     'http://localhost:8000',
     'http://localhost:8080',
-    'http://bore.pub:7359',
-    'http://bore.pub:8133',
     'https://ominous-space-fishstick-pjgvrxjqjwrjh9476-8080.app.github.dev',
     'https://ominous-space-fishstick-pjgvrxjqjwrjh9476-9564.app.github.dev'
 ];
