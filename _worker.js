@@ -13,7 +13,7 @@ class DownloadFormSubmitter {
         this.base_url = "https://downloadwella.com";
         
         if (this.devMode) {
-            console.warn('⚠️ WARNING: Running in development mode with relaxed SSL verification. Do not use in production!');
+            console.warn('⚠️ Running in development mode with relaxed SSL verification');
         }
     }
 
@@ -34,32 +34,45 @@ class DownloadFormSubmitter {
             return { url };
         }
 
-        try {
-            const fetchOptions = {
-                headers: this.headers,
+        const fetchOptions = {
+            headers: this.headers,
+            method: 'GET'
+        };
+
+        if (this.devMode) {
+            // Add dev mode options
+            fetchOptions.cf = {
+                // Cloudflare specific options
+                ssl: false,
+                rejectUnauthorized: false
             };
+        }
 
-            // Only add insecure options in dev mode
-            if (this.devMode) {
-                fetchOptions.insecure = true;
-                fetchOptions.rejectUnauthorized = false;
-            }
-
+        try {
             const response = await fetch(url, fetchOptions);
+            
+            if (response.status === 526 && this.devMode) {
+                console.warn('Cloudflare SSL verification failed, retrying with relaxed settings');
+                // Retry with additional SSL bypass options
+                const retryResponse = await fetch(url, {
+                    ...fetchOptions,
+                    cf: {
+                        ...fetchOptions.cf,
+                        tlsVersion: 'TLSv1.2',
+                        ciphers: ['ECDHE-ECDSA-AES128-GCM-SHA256'],
+                        minTlsVersion: '1.0'
+                    }
+                });
+                return retryResponse;
+            }
 
             if (response.ok) {
                 return response;
             }
             throw new Error(`Request failed with status ${response.status}`);
         } catch (error) {
-            if (error.cause?.code === 'CERT_INVALID' && this.devMode) {
-                // Retry with relaxed SSL verification in dev mode
-                const response = await fetch(url, {
-                    headers: this.headers,
-                    insecure: true,
-                    rejectUnauthorized: false,
-                });
-                return response;
+            if (this.verbose) {
+                console.error('Fetch error:', error);
             }
             throw error;
         }
@@ -126,21 +139,38 @@ class DownloadFormSubmitter {
                 redirect: 'follow'
             };
 
-            // Add insecure options in dev mode
             if (this.devMode) {
-                fetchOptions.insecure = true;
-                fetchOptions.rejectUnauthorized = false;
+                fetchOptions.cf = {
+                    ssl: false,
+                    rejectUnauthorized: false,
+                    tlsVersion: 'TLSv1.2',
+                    ciphers: ['ECDHE-ECDSA-AES128-GCM-SHA256'],
+                    minTlsVersion: '1.0'
+                };
             }
 
             const response = await fetch(submitUrl, fetchOptions);
 
+            if (response.status === 526 && this.devMode) {
+                console.warn('Cloudflare SSL verification failed on form submission, retrying with relaxed settings');
+                const retryResponse = await fetch(submitUrl, {
+                    ...fetchOptions,
+                    cf: {
+                        ...fetchOptions.cf,
+                        strictSSL: false
+                    }
+                });
+                return { url: retryResponse.url };
+            }
+
             if (response.ok) {
-                const finalUrl = response.url;
-                return { url: finalUrl };
+                return { url: response.url };
             }
             throw new Error(`Form submission failed with status ${response.status}`);
         } catch (e) {
-            console.error(`Request failed: ${e.message}`);
+            if (this.verbose) {
+                console.error(`Request failed: ${e.message}`);
+            }
             throw e;
         }
     }
