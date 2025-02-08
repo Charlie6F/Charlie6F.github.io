@@ -6,6 +6,8 @@ compatibility_flags = ["nodejs_compat"]  # Add this line to enable Node.js compa
 # Worker configuration
 main = "_worker.js"
 
+assets = { directory = "./" }
+
 [site]
 bucket = "./"
 
