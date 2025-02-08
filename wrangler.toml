@@ -17,3 +17,9 @@ external_node_modules = ["jsdom"]
 
 [vars]
 ENVIRONMENT = "production"
+
+[observability.logs]
+enabled = true
+
+
+
