@@ -5,7 +5,7 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
-    "jsdom": "^22.1.0"
+    "linkedom": "^0.18.9"
   },
   "devDependencies": {
     "wrangler": "^3.107.3"
