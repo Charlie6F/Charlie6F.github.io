@@ -1,6 +1,7 @@
 #:schema node_modules/wrangler/config-schema.json
 name = "nexu"
 compatibility_date = "2024-02-08"
+compatibility_flags = ["nodejs_compat"]  # Add this line to enable Node.js compatibility
 
 # Worker configuration
 main = "_worker.js"
