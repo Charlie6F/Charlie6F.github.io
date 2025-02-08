@@ -140,7 +140,7 @@ const apiRoutes = {
         });
     },
 
-    '/api/image-proxy': async (request) => {
+    '/api/image': async (request) => {
         const url = new URL(request.url);
         const imageUrl = url.searchParams.get('url');
 
