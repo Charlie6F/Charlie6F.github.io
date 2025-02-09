@@ -8,14 +8,21 @@ class DownloadFormSubmitter {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
       'Accept-Language': 'en-US,en;q=0.9',
-      'Connection': 'keep-alive'
+      'Connection': 'keep-alive',
+      // Add additional headers that might help with Cloudflare
+      'Upgrade-Insecure-Requests': '1',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Sec-Fetch-User': '?1'
     };
     this.base_url = "https://downloadwella.com";
     this.current_url = null;
     this.filename = null;
     this.retryCount = 0;
     this.maxRetries = 3;
-    this.retryDelay = 2000; // Initial delay in milliseconds
+    this.retryDelay = 2000;
+  }
 
     if (devMode) {
       this.log('warning', "Development mode enabled - SSL verification disabled");
@@ -118,6 +125,36 @@ class DownloadFormSubmitter {
     }
   }
 
+  async getFetchOptions(method = 'GET', body = null) {
+    const options = {
+      method,
+      headers: { ...this.headers },
+      redirect: 'follow'
+    };
+
+    if (body) {
+      options.body = body;
+    }
+
+    if (this.devMode) {
+      // Add comprehensive SSL bypass options
+      options.cf = {
+        ssl: false,
+        cacheEverything: true,
+        cacheTtl: 300,
+        minify: {
+          javascript: true,
+          css: true,
+          html: true
+        }
+      };
+      options.insecure = true;
+      options.rejectUnauthorized = false;
+    }
+
+    return options;
+  }
+
   async getPageContent(url) {
     return this.retryWithExponentialBackoff(async () => {
       try {
@@ -127,16 +164,21 @@ class DownloadFormSubmitter {
           return url;
         }
 
-        const fetchOptions = {
-          headers: this.headers,
-          redirect: 'follow',
-          // Always disable SSL verification in dev mode
-          ...(this.devMode && { 
-            insecure: true,
-            rejectUnauthorized: false
-          })
-        };
+        // Try fetching with proxy if in dev mode
+        if (this.devMode) {
+          try {
+            // First try with CloudFlare proxy
+            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+            const proxyResponse = await fetch(proxyUrl);
+            if (proxyResponse.ok) {
+              return proxyResponse;
+            }
+          } catch (proxyError) {
+            this.log('warning', `Proxy request failed: ${proxyError.message}`);
+          }
+        }
 
+        const fetchOptions = await this.getFetchOptions();
         const response = await fetch(url, fetchOptions);
 
         if (!response.ok) {
@@ -149,9 +191,17 @@ class DownloadFormSubmitter {
       } catch (e) {
         const errorInfo = this.classifyError(e.status || 0, e.message);
         
-        // If SSL error occurs and we're not in dev mode, throw error with clear message
-        if (errorInfo.sslRelated && !this.devMode) {
-          throw new Error('SSL verification failed - please enable development mode');
+        if (errorInfo.sslRelated) {
+          // Try alternative proxy if first attempt failed
+          try {
+            const corsProxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+            const proxyResponse = await fetch(corsProxyUrl);
+            if (proxyResponse.ok) {
+              return proxyResponse;
+            }
+          } catch (proxyError) {
+            this.log('error', `All proxy attempts failed: ${proxyError.message}`);
+          }
         }
         
         throw e;
@@ -180,6 +230,10 @@ class DownloadFormSubmitter {
         const initialResponse = await this.getPageContent(url);
         const [formData, formAction] = await this.extractFormData(initialResponse);
 
+        if (!formData || !formAction) {
+          throw new Error("Could not extract form data from page");
+        }
+
         const finalFormData = new URLSearchParams({
           op: 'download2',
           id: fileId,
@@ -200,36 +254,23 @@ class DownloadFormSubmitter {
         const submitUrl = new URL(formAction || '', this.base_url).href;
         this.log('info', "Submitting form...");
         
-        const fetchOptions = {
-          method: 'POST',
-          headers: this.headers,
-          body: finalFormData.toString(),
-          redirect: 'follow',
-          // Always disable SSL verification in dev mode
-          ...(this.devMode && { 
-            insecure: true,
-            rejectUnauthorized: false
-          })
-        };
-
+        const fetchOptions = await this.getFetchOptions('POST', finalFormData.toString());
         const response = await fetch(submitUrl, fetchOptions);
 
-        if (response.ok) {
-          const downloadUrl = response.url;
-          
-          if (downloadUrl) {
-            this.log('info', `Download url found: ${downloadUrl}`);
-            return {
-              url: downloadUrl,
-              filename: this.filename,
-              file_id: fileId
-            };
-          } else {
-            throw new Error("Download URL could not be extracted");
-          }
-        } else {
+        if (!response.ok) {
           throw new Error(`Form submission failed with status code: ${response.status}`);
         }
+
+        const downloadUrl = response.url;
+        if (!downloadUrl) {
+          throw new Error("Download URL could not be extracted");
+        }
+
+        return {
+          url: downloadUrl,
+          filename: this.filename,
+          file_id: fileId
+        };
       });
 
       return result;
@@ -247,6 +288,7 @@ class DownloadFormSubmitter {
       };
     }
   }
+
   
   extractFilename(url) {
     try {
