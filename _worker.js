@@ -245,6 +245,7 @@ class DownloadFormSubmitter {
             console.error('Error extracting download URL:', error);
             return { url: response.url };
         }
+    }
 }
 
 const ALLOWED_ORIGINS = [
