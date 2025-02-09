@@ -40,9 +40,7 @@ class DownloadFormSubmitter {
         };
 
         if (this.devMode) {
-            // Add dev mode options
             fetchOptions.cf = {
-                // Cloudflare specific options
                 ssl: false,
                 rejectUnauthorized: false
             };
@@ -53,7 +51,6 @@ class DownloadFormSubmitter {
             
             if (response.status === 526 && this.devMode) {
                 console.warn('Cloudflare SSL verification failed, retrying with relaxed settings');
-                // Retry with additional SSL bypass options
                 const retryResponse = await fetch(url, {
                     ...fetchOptions,
                     cf: {
@@ -124,6 +121,7 @@ class DownloadFormSubmitter {
                 ...formData
             };
 
+            // Wait for 2 seconds like the direct download version
             await new Promise(resolve => setTimeout(resolve, 2000));
 
             const submitUrl = new URL(formAction || '', this.base_url).href;
@@ -160,11 +158,11 @@ class DownloadFormSubmitter {
                         strictSSL: false
                     }
                 });
-                return { url: retryResponse.url };
+                return this.extractDownloadUrl(retryResponse);
             }
 
             if (response.ok) {
-                return { url: response.url };
+                return this.extractDownloadUrl(response);
             }
             throw new Error(`Form submission failed with status ${response.status}`);
         } catch (e) {
@@ -173,6 +171,38 @@ class DownloadFormSubmitter {
             }
             throw e;
         }
+    }
+
+    async extractDownloadUrl(response) {
+        // First check content-disposition header
+        const contentDisposition = response.headers.get('content-disposition');
+        if (contentDisposition) {
+            return { url: response.url };
+        }
+
+        // If no content-disposition, try to get the final URL after all redirects
+        const finalUrl = response.url;
+        if (finalUrl) {
+            return { url: finalUrl };
+        }
+
+        // If neither method works, try to parse the response body for a download link
+        const html = await response.text();
+        const { document } = parseHTML(html);
+        const downloadLink = document.querySelector('a[href*="download"]') || 
+                           document.querySelector('a[href*=".mp4"]') ||
+                           document.querySelector('a[href*=".mkv"]') ||
+                           document.querySelector('a[href*=".avi"]');
+        
+        if (downloadLink) {
+            const href = downloadLink.getAttribute('href');
+            if (href) {
+                return { url: new URL(href, this.base_url).href };
+            }
+        }
+
+        // If all methods fail, return the response URL as a last resort
+        return { url: response.url };
     }
 }
 
