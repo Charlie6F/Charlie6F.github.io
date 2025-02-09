@@ -239,16 +239,7 @@ class DownloadFormSubmitter {
         
         return null;
       }
-    } catch (e) {
-      this.log('error', `Request failed: ${e.message}`);
-      
-      if (e.message.includes('SSL') || e.message.includes('certificate')) {
-        this.log('warning', 'SSL verification failed - try enabling development mode');
-      }
-      
-      throw e;
-    }
-      });
+    });
 
       return result;
     } catch (e) {
