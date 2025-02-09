@@ -174,77 +174,36 @@ class DownloadFormSubmitter {
     }
 
     async extractDownloadUrl(response) {
-        try {
-            // Get the response content
-            const html = await response.text();
-            const { document } = parseHTML(html);
-    
-            // First try to find the direct download link
-            const downloadLinks = [
-                // Direct download button/link
-                ...document.querySelectorAll('a[href*="downloadwella.com/d/"]'),
-                ...document.querySelectorAll('a[href*="dweds"]'),
-                // Backup selectors for different URL patterns
-                ...document.querySelectorAll('a[href*="/d/"]'),
-                ...document.querySelectorAll('a[href$=".mkv"]'),
-                ...document.querySelectorAll('a[href$=".mp4"]'),
-                ...document.querySelectorAll('a[href$=".avi"]')
-            ];
-    
-            for (const link of downloadLinks) {
-                const href = link.getAttribute('href');
-                if (href && (
-                    href.includes('/d/') || 
-                    href.includes('dweds') || 
-                    href.endsWith('.mkv') || 
-                    href.endsWith('.mp4') || 
-                    href.endsWith('.avi')
-                )) {
-                    // Ensure we have a full URL
-                    const fullUrl = href.startsWith('http') ? href : new URL(href, this.base_url).href;
-                    if (this.verbose) {
-                        console.log('Found download URL:', fullUrl);
-                    }
-                    return { url: fullUrl };
-                }
-            }
-    
-            // Fallback to content-disposition header
-            const contentDisposition = response.headers.get('content-disposition');
-            if (contentDisposition) {
-                return { url: response.url };
-            }
-    
-            // If we still haven't found a URL, try parsing any iframe sources
-            const iframes = document.querySelectorAll('iframe');
-            for (const iframe of iframes) {
-                const src = iframe.getAttribute('src');
-                if (src && (src.includes('/d/') || src.includes('dweds'))) {
-                    return { url: new URL(src, this.base_url).href };
-                }
-            }
-    
-            // Last resort: Try to find any link that looks like a download link
-            const allLinks = document.querySelectorAll('a[href]');
-            for (const link of allLinks) {
-                const href = link.getAttribute('href');
-                if (href && (
-                    link.textContent.toLowerCase().includes('download') ||
-                    href.includes('download') ||
-                    href.includes('/d/') ||
-                    href.includes('dweds')
-                )) {
-                    return { url: new URL(href, this.base_url).href };
-                }
-            }
-    
-            // If all methods fail, return the response URL
-            console.warn('No download URL found in page, falling back to response URL');
-            return { url: response.url };
-        } catch (error) {
-            console.error('Error extracting download URL:', error);
+        // First check content-disposition header
+        const contentDisposition = response.headers.get('content-disposition');
+        if (contentDisposition) {
             return { url: response.url };
         }
+
+        // If no content-disposition, try to get the final URL after all redirects
+        const finalUrl = response.url;
+        if (finalUrl) {
+            return { url: finalUrl };
+        }
+
+        // If neither method works, try to parse the response body for a download link
+        const html = await response.text();
+        const { document } = parseHTML(html);
+        const downloadLink = document.querySelector('a[href*="download"]') || 
+                           document.querySelector('a[href*=".mp4"]') ||
+                           document.querySelector('a[href*=".mkv"]') ||
+                           document.querySelector('a[href*=".avi"]');
+        
+        if (downloadLink) {
+            const href = downloadLink.getAttribute('href');
+            if (href) {
+                return { url: new URL(href, this.base_url).href };
+            }
+        }
+
+        // If all methods fail, return the response URL as a last resort
+        return { url: response.url };
+    }
 }
 
 const ALLOWED_ORIGINS = [
