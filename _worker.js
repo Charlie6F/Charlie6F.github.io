@@ -24,7 +24,9 @@ class DownloadFormSubmitter {
     constructor(verify_ssl = false, verbose = false) {
         this.verify_ssl = verify_ssl;
         this.verbose = verbose;
-        
+        this.maxRetries = 3;
+        this.retryDelay = 1500; // Increased delay to 1.5 seconds
+
         if (!verify_ssl && verbose) {
             logger.warning("SSL verification disabled");
         }
@@ -33,14 +35,33 @@ class DownloadFormSubmitter {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
-            'Connection': 'keep-alive'
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
         };
 
         this.base_url = "https://downloadwella.com";
         this.current_url = null;
         this.filename = null;
-        this.maxRetries = 3; // Add retry limit
-        this.retryDelay = 1000; // 1 second delay between retries
+
+        // CloudFlare-specific fetch options
+        this.fetchOptions = {
+            cf: {
+                ssl: {
+                    verifyMode: "none",
+                    rejectUnauthorized: false,
+                    certificateMode: "insecure"
+                },
+                cacheTtl: 0,
+                cacheEverything: false,
+                scrapeShield: false,
+                apps: false,
+                minify: {
+                    javascript: false,
+                    css: false,
+                    html: false
+                }
+            }
+        };
     }
 
     extractFilename(url) {
@@ -76,31 +97,54 @@ class DownloadFormSubmitter {
 
     async fetchWithRetry(url, options, retryCount = 0) {
         try {
-            // Always set SSL options for CloudFlare
-            options.cf = {
-                ssl: {
-                    verifyMode: "none",
-                    rejectUnauthorized: false
+            // Merge default CloudFlare options with provided options
+            const mergedOptions = {
+                ...options,
+                cf: {
+                    ...this.fetchOptions.cf,
+                    ...options.cf
                 }
             };
 
-            const response = await fetch(url, options);
+            // Add custom headers for SSL bypass
+            mergedOptions.headers = {
+                ...mergedOptions.headers,
+                'X-Forwarded-Proto': 'https',
+                'X-SSL-Bypass': 'true'
+            };
 
-            // Handle CloudFlare SSL errors
-            if (response.status === 526 || response.status === 525) {
+            if (this.verbose) {
+                logger.info(`Attempt ${retryCount + 1} - Fetching: ${url}`);
+            }
+
+            const response = await fetch(url, mergedOptions);
+
+            // Handle various SSL-related status codes
+            if (response.status === 526 || response.status === 525 || response.status === 495) {
                 if (retryCount < this.maxRetries) {
                     logger.warning(`CloudFlare SSL error (${response.status}), retry attempt ${retryCount + 1}`);
-                    await new Promise(resolve => setTimeout(resolve, this.retryDelay));
-                    return this.fetchWithRetry(url, options, retryCount + 1);
+                    
+                    // Increase delay with each retry
+                    const currentDelay = this.retryDelay * (retryCount + 1);
+                    await new Promise(resolve => setTimeout(resolve, currentDelay));
+                    
+                    // Try alternative SSL configurations on retries
+                    mergedOptions.cf.ssl = {
+                        ...mergedOptions.cf.ssl,
+                        certificateMode: retryCount === 1 ? "loose" : "insecure",
+                        verifyMode: retryCount === 2 ? "loose" : "none"
+                    };
+                    
+                    return this.fetchWithRetry(url, mergedOptions, retryCount + 1);
                 }
-                throw new Error(`SSL verification failed after ${this.maxRetries} retries`);
+                throw new Error(`SSL verification failed after ${this.maxRetries} retries (Status: ${response.status})`);
             }
 
             return response;
         } catch (error) {
-            if (retryCount < this.maxRetries) {
-                logger.warning(`Request failed, retry attempt ${retryCount + 1}: ${error.message}`);
-                await new Promise(resolve => setTimeout(resolve, this.retryDelay));
+            if (error.message.includes('SSL') && retryCount < this.maxRetries) {
+                logger.warning(`SSL error, retry attempt ${retryCount + 1}: ${error.message}`);
+                await new Promise(resolve => setTimeout(resolve, this.retryDelay * (retryCount + 1)));
                 return this.fetchWithRetry(url, options, retryCount + 1);
             }
             throw error;
@@ -109,28 +153,24 @@ class DownloadFormSubmitter {
 
     async getPageContent(url) {
         try {
-            if (this.verbose) {
-                logger.info(`Fetching page: ${url}`);
-            }
-            
             if (!url.includes('downloadwella.com')) {
                 logger.info(`Found direct url: ${url}`);
-                return url;
+                return { text: async () => url };
             }
 
             const fetchOptions = {
                 method: 'GET',
-                headers: this.headers
+                headers: this.headers,
+                ...this.fetchOptions
             };
 
             const response = await this.fetchWithRetry(url, fetchOptions);
 
-            if (response.ok) {
-                return response;
-            } else {
-                logger.error(`Page fetch failed with status code: ${response.status}`);
-                throw new Error(`Request failed with status code ${response.status}`);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch page: ${response.status} ${response.statusText}`);
             }
+
+            return response;
         } catch (e) {
             logger.error(`Page fetch failed: ${e.message}`);
             throw e;
@@ -188,6 +228,11 @@ class DownloadFormSubmitter {
             }
 
             const initialResponse = await this.getPageContent(url);
+            
+            if (typeof initialResponse.text !== 'function') {
+                return { url: initialResponse.text };
+            }
+
             const htmlContent = await initialResponse.text();
             const [formData, formAction] = this.extractFormData(htmlContent);
 
@@ -221,7 +266,8 @@ class DownloadFormSubmitter {
                 method: 'POST',
                 headers: this.headers,
                 body: finalFormData.toString(),
-                redirect: 'follow'
+                redirect: 'follow',
+                ...this.fetchOptions
             });
 
             if (response.ok) {
@@ -367,6 +413,7 @@ const apiRoutes = {
     },
 };
 
+// Update the download route with better error handling
 apiRoutes['/api/download'] = async (request) => {
     const url = new URL(request.url);
     const downloadUrl = url.searchParams.get('url');
@@ -380,12 +427,8 @@ apiRoutes['/api/download'] = async (request) => {
     }
 
     try {
-        const downloader = new DownloadFormSubmitter(false, devMode); // Always disable SSL verification
+        const downloader = new DownloadFormSubmitter(false, devMode);
         const result = await downloader.submitForm(downloadUrl);
-        
-        if (!result) {
-            throw new Error('Failed to get download URL');
-        }
         
         return new Response(JSON.stringify(result), {
             headers: { 
@@ -402,21 +445,21 @@ apiRoutes['/api/download'] = async (request) => {
             url: downloadUrl,
             devMode: devMode,
             retryAttempts: 3,
-            suggestion: error.message.includes('SSL') ? 
-                'SSL verification failed, but retries were attempted' : 
-                'Please try again later'
+            errorType: error.message.includes('SSL') ? 'SSL_ERROR' : 'FETCH_ERROR',
+            suggestion: 'Please try again in a few moments'
         };
         
         return new Response(JSON.stringify(errorResponse), {
             status: error.message.includes('SSL') ? 526 : 502,
             headers: { 
                 'Content-Type': 'application/json',
-                'X-Error-Type': 'download_failed',
+                'X-Error-Type': errorResponse.errorType,
                 ...(devMode && { 'X-Dev-Mode': 'true' })
             }
         });
     }
 };
+
 
 // Main worker
 export default {
