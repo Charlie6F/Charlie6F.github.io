@@ -252,9 +252,10 @@ class DownloadFormSubmitter {
         this.debug('Beginning download URL extraction from response');
         try {
             const html = await response.text();
-            this.debug('Response content length:', { contentLength: html.length });
+            this.debug('Response content length:', {content: html, contentLength: html.length });
             
             const { document } = parseHTML(html);
+            this.debug('Response document :', {content: document});
             
             const selectors = [
                 'a[href*="downloadwella.com/d/"]',
@@ -269,12 +270,13 @@ class DownloadFormSubmitter {
 
             const downloadLinks = selectors.flatMap(selector => {
                 const links = [...document.querySelectorAll(selector)];
-                this.debug(`Found ${links.length} links matching selector:`, { selector });
+                this.debug(`Found ${links} links matching selector:`, { selector });
                 return links;
             });
 
             for (const link of downloadLinks) {
                 const href = link.getAttribute('href');
+                this.debug('Found valid URL:', { link });
                 if (href && (
                     href.includes('/d/') || 
                     href.includes('dweds') || 
