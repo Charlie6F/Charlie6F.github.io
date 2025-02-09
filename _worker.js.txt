@@ -1,180 +1,186 @@
 import { parseHTML } from 'linkedom';
 
 class DownloadFormSubmitter {
-    constructor(verbose = false, devMode = false) {
-        this.verbose = verbose;
-        this.devMode = devMode;
-        this.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Connection': 'keep-alive'
-        };
-        this.base_url = "https://downloadwella.com";
+  constructor(verbose = false) {
+    this.verbose = verbose;
+    this.headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Connection': 'keep-alive'
+    };
+    this.base_url = "https://downloadwella.com";
+    this.current_url = null;
+    this.filename = null;
+  }
+
+  log(level, message) {
+    if (this.verbose || level === 'error') {
+      console.log(`[${level.toUpperCase()}] ${message}`);
+    }
+  }
+
+  extractFilename(url) {
+    try {
+      const parsedUrl = new URL(url);
+      const pathName = decodeURIComponent(parsedUrl.pathname);
+      const filename = pathName.split('/').pop();
+      return filename.endsWith('.html') ? filename.slice(0, -5) : filename;
+    } catch (e) {
+      this.log('error', `Error extracting filename: ${e.message}`);
+      return "downloaded_file";
+    }
+  }
+
+  extractFileId(url) {
+    try {
+      const parsedUrl = new URL(url);
+      const pathName = parsedUrl.pathname;
+      const match = pathName.match(/\/([a-zA-Z0-9]+)(?:\/|$)/);
+      if (match) {
+        const fileId = match[1];
+        this.log('info', `File ID: ${fileId}`);
+        return fileId;
+      }
+      this.log('error', "Could not extract file ID from URL");
+      return null;
+    } catch (e) {
+      this.log('error', `Error extracting file ID: ${e.message}`);
+      return null;
+    }
+  }
+
+  async getPageContent(url) {
+    try {
+      this.log('info', `Fetching page: ${url}`);
+      if (!url.includes('downloadwella.com')) {
+        this.log('info', `Found direct url: ${url}`);
+        return url;
+      }
+
+      const response = await fetch(url, {
+        headers: this.headers,
+        redirect: 'follow',
+      });
+
+      if (response.ok) {
+        return response;
+      } else {
+        this.log('error', `Page fetch failed with status code: ${response.status}`);
+        throw new Error(`Request failed with status code ${response.status}`);
+      }
+    } catch (e) {
+      this.log('error', `Page fetch failed: ${e.message}`);
+      throw e;
+    }
+  }
+
+  async extractFormData(response) {
+    try {
+      const html = await response.text();
+      // Using regex instead of DOM parsing since CloudFlare Workers don't have DOM API
+      const formMatch = html.match(/<form[^>]*action="([^"]*)"[^>]*>([\s\S]*?)<\/form>/i);
+      
+      if (!formMatch) {
+        this.log('warning', "No form found in page");
+        return [null, null];
+      }
+
+      const actionUrl = formMatch[1];
+      const formContent = formMatch[2];
+      const formData = {};
+      
+      // Extract input fields
+      const inputRegex = /<input[^>]*name="([^"]*)"[^>]*value="([^"]*)"[^>]*>/g;
+      let match;
+      while ((match = inputRegex.exec(formContent)) !== null) {
+        formData[match[1]] = match[2];
+      }
+
+      if (Object.keys(formData).length > 0) {
+        return [formData, actionUrl];
+      }
+
+      this.log('warning', "No form data found in page");
+      return [null, null];
+    } catch (e) {
+      this.log('error', `Error extracting form data: ${e.message}`);
+      return [null, null];
+    }
+  }
+
+  async submitForm(url) {
+    try {
+      this.current_url = url;
+      this.filename = this.extractFilename(url);
+      const fileId = this.extractFileId(url);
+
+      if (!fileId) {
+        throw new Error("Invalid URL format - could not extract file ID");
+      }
+
+      this.log('info', "Processing download page...");
+
+      if (!url.includes('downloadwella.com')) {
+        this.log('info', `Found direct url: ${url}`);
+        return { url: url };
+      }
+
+      const initialResponse = await this.getPageContent(url);
+      const [formData, formAction] = await this.extractFormData(initialResponse);
+
+      const finalFormData = new URLSearchParams({
+        op: 'download2',
+        id: fileId,
+        rand: '',
+        referer: '',
+        method_free: 'Free Download',
+        method_premium: '',
+        ...formData
+      });
+
+      this.headers['Origin'] = this.base_url;
+      this.headers['Referer'] = url;
+      this.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+
+      this.log('info', "Waiting for form submission...");
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      const submitUrl = new URL(formAction || '', this.base_url).href;
+      this.log('info', "Submitting form...");
+      
+      const response = await fetch(submitUrl, {
+        method: 'POST',
+        headers: this.headers,
+        body: finalFormData.toString(),
+        redirect: 'follow'
+      });
+
+      if (response.ok) {
+        const downloadUrl = response.url;
         
-        if (this.devMode) {
-            console.warn('⚠️ Running in development mode with relaxed SSL verification');
+        if (downloadUrl) {
+          this.log('info', `Download url found: ${downloadUrl}`);
+          return {
+            url: downloadUrl,
+            filename: this.filename,
+            file_id: fileId
+          };
+        } else {
+          this.log('error', "Download URL could not be extracted");
+          return null;
         }
+      } else {
+        this.log('error', `Form submission failed with status code: ${response.status}`);
+        return null;
+      }
+    } catch (e) {
+      this.log('error', `Request failed: ${e.message}`);
+      throw e;
     }
-
-    extractFileId(url) {
-        try {
-            const parsedUrl = new URL(url);
-            const pathName = parsedUrl.pathname;
-            const match = pathName.match(/\/([a-zA-Z0-9]+)(?:\/|$)/);
-            return match ? match[1] : null;
-        } catch (e) {
-            console.error(`Error extracting file ID: ${e.message}`);
-            return null;
-        }
-    }
-
-    async getPageContent(url) {
-        if (!url.includes('downloadwella.com')) {
-            return { url };
-        }
-
-        const fetchOptions = {
-            headers: this.headers,
-            method: 'GET'
-        };
-
-        if (this.devMode) {
-            // Add dev mode options
-            fetchOptions.cf = {
-                // Cloudflare specific options
-                ssl: false,
-                rejectUnauthorized: false
-            };
-        }
-
-        try {
-            const response = await fetch(url, fetchOptions);
-            
-            if (response.status === 526 && this.devMode) {
-                console.warn('Cloudflare SSL verification failed, retrying with relaxed settings');
-                // Retry with additional SSL bypass options
-                const retryResponse = await fetch(url, {
-                    ...fetchOptions,
-                    cf: {
-                        ...fetchOptions.cf,
-                        tlsVersion: 'TLSv1.2',
-                        ciphers: ['ECDHE-ECDSA-AES128-GCM-SHA256'],
-                        minTlsVersion: '1.0'
-                    }
-                });
-                return retryResponse;
-            }
-
-            if (response.ok) {
-                return response;
-            }
-            throw new Error(`Request failed with status ${response.status}`);
-        } catch (error) {
-            if (this.verbose) {
-                console.error('Fetch error:', error);
-            }
-            throw error;
-        }
-    }
-
-    extractFormData(htmlContent) {
-        try {
-            const { document } = parseHTML(htmlContent);
-            const form = document.querySelector('form');
-            const formData = {};
-            
-            if (form) {
-                for (const input of form.querySelectorAll('input')) {
-                    const name = input.getAttribute('name');
-                    const value = input.getAttribute('value') || '';
-                    if (name) formData[name] = value;
-                }
-                return [formData, form.getAttribute('action')];
-            }
-            return [null, null];
-        } catch (e) {
-            console.error(`Error extracting form data: ${e.message}`);
-            return [null, null];
-        }
-    }
-
-    async submitForm(url) {
-        try {
-            const fileId = this.extractFileId(url);
-            if (!fileId) {
-                throw new Error("Invalid URL format");
-            }
-
-            if (!url.includes('downloadwella.com')) {
-                return { url };
-            }
-
-            const initialResponse = await this.getPageContent(url);
-            const htmlContent = await initialResponse.text();
-            const [formData, formAction] = this.extractFormData(htmlContent);
-
-            const finalFormData = {
-                op: 'download2',
-                id: fileId,
-                rand: '',
-                referer: '',
-                method_free: 'Free Download',
-                method_premium: '',
-                ...formData
-            };
-
-            await new Promise(resolve => setTimeout(resolve, 2000));
-
-            const submitUrl = new URL(formAction || '', this.base_url).href;
-            const fetchOptions = {
-                method: 'POST',
-                headers: {
-                    ...this.headers,
-                    'Origin': this.base_url,
-                    'Referer': url,
-                    'Content-Type': 'application/x-www-form-urlencoded'
-                },
-                body: new URLSearchParams(finalFormData).toString(),
-                redirect: 'follow'
-            };
-
-            if (this.devMode) {
-                fetchOptions.cf = {
-                    ssl: false,
-                    rejectUnauthorized: false,
-                    tlsVersion: 'TLSv1.2',
-                    ciphers: ['ECDHE-ECDSA-AES128-GCM-SHA256'],
-                    minTlsVersion: '1.0'
-                };
-            }
-
-            const response = await fetch(submitUrl, fetchOptions);
-
-            if (response.status === 526 && this.devMode) {
-                console.warn('Cloudflare SSL verification failed on form submission, retrying with relaxed settings');
-                const retryResponse = await fetch(submitUrl, {
-                    ...fetchOptions,
-                    cf: {
-                        ...fetchOptions.cf,
-                        strictSSL: false
-                    }
-                });
-                return { url: retryResponse.url };
-            }
-
-            if (response.ok) {
-                return { url: response.url };
-            }
-            throw new Error(`Form submission failed with status ${response.status}`);
-        } catch (e) {
-            if (this.verbose) {
-                console.error(`Request failed: ${e.message}`);
-            }
-            throw e;
-        }
-    }
+  }
 }
+
 
 const ALLOWED_ORIGINS = [
     'https://nexu.charles06f.workers.dev',
