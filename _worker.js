@@ -22,6 +22,11 @@ class DownloadFormSubmitter {
     this.retryCount = 0;
     this.maxRetries = 3;
     this.retryDelay = 2000;
+    this.proxyUrls = [
+      'https://api.allorigins.win/raw?url=',
+      'https://corsproxy.io/?',
+      'https://api.codetabs.com/v1/proxy?quest='
+    ];
 
     if (devMode) {
       this.log('warning', "Development mode enabled - SSL verification disabled");
@@ -155,57 +160,64 @@ class DownloadFormSubmitter {
   }
 
   async getPageContent(url) {
-    return this.retryWithExponentialBackoff(async () => {
+    if (!url.includes('downloadwella.com')) {
+      this.log('info', `Found direct url: ${url}`);
+      return url;
+    }
+
+    // Try each proxy in sequence until one works
+    for (const proxyBase of this.proxyUrls) {
       try {
-        this.log('info', `Fetching page: ${url}`);
-        if (!url.includes('downloadwella.com')) {
-          this.log('info', `Found direct url: ${url}`);
-          return url;
-        }
-
-        // Try fetching with proxy if in dev mode
-        if (this.devMode) {
-          try {
-            // First try with CloudFlare proxy
-            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-            const proxyResponse = await fetch(proxyUrl);
-            if (proxyResponse.ok) {
-              return proxyResponse;
-            }
-          } catch (proxyError) {
-            this.log('warning', `Proxy request failed: ${proxyError.message}`);
-          }
-        }
-
-        const fetchOptions = await this.getFetchOptions();
-        const response = await fetch(url, fetchOptions);
-
-        if (!response.ok) {
-          const error = new Error(`Request failed with status code ${response.status}`);
-          error.status = response.status;
-          throw error;
-        }
-
-        return response;
-      } catch (e) {
-        const errorInfo = this.classifyError(e.status || 0, e.message);
+        const proxyUrl = `${proxyBase}${encodeURIComponent(url)}`;
+        this.log('info', `Trying proxy: ${proxyUrl}`);
         
-        if (errorInfo.sslRelated) {
-          // Try alternative proxy if first attempt failed
-          try {
-            const corsProxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
-            const proxyResponse = await fetch(corsProxyUrl);
-            if (proxyResponse.ok) {
-              return proxyResponse;
-            }
-          } catch (proxyError) {
-            this.log('error', `All proxy attempts failed: ${proxyError.message}`);
+        const response = await fetch(proxyUrl, {
+          headers: this.headers,
+          cf: {
+            cacheTtl: 300,
+            cacheEverything: true
           }
+        });
+
+        if (response.ok) {
+          this.log('info', `Successful response from proxy: ${proxyBase}`);
+          return response;
         }
-        
-        throw e;
+      } catch (proxyError) {
+        this.log('warning', `Proxy attempt failed: ${proxyError.message}`);
+        continue;
       }
-    });
+    }
+
+    // If all proxies fail, try direct request with SSL verification disabled
+    try {
+      const fetchOptions = {
+        method: 'GET',
+        headers: this.headers,
+        cf: {
+          // Disable SSL verification in dev mode
+          ssl: this.devMode ? false : true,
+          cacheEverything: true,
+          cacheTtl: 300,
+          minify: {
+            javascript: true,
+            css: true,
+            html: true
+          }
+        }
+      };
+
+      const response = await fetch(url, fetchOptions);
+      
+      if (!response.ok) {
+        throw new Error(`Direct request failed with status code ${response.status}`);
+      }
+
+      return response;
+    } catch (directError) {
+      this.log('error', `All request attempts failed: ${directError.message}`);
+      throw directError;
+    }
   }
 
   async submitForm(url) {
@@ -218,7 +230,7 @@ class DownloadFormSubmitter {
         throw new Error("Invalid URL format - could not extract file ID");
       }
 
-      const result = await this.retryWithExponentialBackoff(async () => {
+      return await this.retryWithExponentialBackoff(async () => {
         this.log('info', "Processing download page...");
 
         if (!url.includes('downloadwella.com')) {
@@ -253,7 +265,18 @@ class DownloadFormSubmitter {
         const submitUrl = new URL(formAction || '', this.base_url).href;
         this.log('info', "Submitting form...");
         
-        const fetchOptions = await this.getFetchOptions('POST', finalFormData.toString());
+        const fetchOptions = {
+          method: 'POST',
+          headers: this.headers,
+          body: finalFormData.toString(),
+          redirect: 'follow',
+          cf: {
+            ssl: this.devMode ? false : true,
+            cacheEverything: true,
+            cacheTtl: 300
+          }
+        };
+
         const response = await fetch(submitUrl, fetchOptions);
 
         if (!response.ok) {
@@ -272,7 +295,6 @@ class DownloadFormSubmitter {
         };
       });
 
-      return result;
     } catch (e) {
       const errorInfo = e.classified || this.classifyError(e.status || 0, e.message);
       
@@ -285,69 +307,6 @@ class DownloadFormSubmitter {
         devMode: this.devMode,
         retryAttempts: this.retryCount
       };
-    }
-  }
-
-  
-  extractFilename(url) {
-    try {
-      const parsedUrl = new URL(url);
-      const pathName = decodeURIComponent(parsedUrl.pathname);
-      const filename = pathName.split('/').pop();
-      return filename.endsWith('.html') ? filename.slice(0, -5) : filename;
-    } catch (e) {
-      this.log('error', `Error extracting filename: ${e.message}`);
-      return "downloaded_file";
-    }
-  }
-
-  extractFileId(url) {
-    try {
-      const parsedUrl = new URL(url);
-      const pathName = parsedUrl.pathname;
-      const match = pathName.match(/\/([a-zA-Z0-9]+)(?:\/|$)/);
-      if (match) {
-        const fileId = match[1];
-        this.log('info', `File ID: ${fileId}`);
-        return fileId;
-      }
-      this.log('error', "Could not extract file ID from URL");
-      return null;
-    } catch (e) {
-      this.log('error', `Error extracting file ID: ${e.message}`);
-      return null;
-    }
-  }
-  
-  async extractFormData(response) {
-    try {
-      const html = await response.text();
-      const formMatch = html.match(/<form[^>]*action="([^"]*)"[^>]*>([\s\S]*?)<\/form>/i);
-      
-      if (!formMatch) {
-        this.log('warning', "No form found in page");
-        return [null, null];
-      }
-
-      const actionUrl = formMatch[1];
-      const formContent = formMatch[2];
-      const formData = {};
-      
-      const inputRegex = /<input[^>]*name="([^"]*)"[^>]*value="([^"]*)"[^>]*>/g;
-      let match;
-      while ((match = inputRegex.exec(formContent)) !== null) {
-        formData[match[1]] = match[2];
-      }
-
-      if (Object.keys(formData).length > 0) {
-        return [formData, actionUrl];
-      }
-
-      this.log('warning', "No form data found in page");
-      return [null, null];
-    } catch (e) {
-      this.log('error', `Error extracting form data: ${e.message}`);
-      return [null, null];
     }
   }
 }
