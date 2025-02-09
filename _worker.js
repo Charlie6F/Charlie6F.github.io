@@ -30,9 +30,9 @@ class DownloadFormSubmitter {
     }
 
     async getPageContent(url) {
-        if (!url.includes('downloadwella.com')) {
-            return { url };
-        }
+        //if (!url.includes('downloadwella.com')) {
+            //return { url };
+        //}
 
         const fetchOptions = {
             headers: this.headers,
@@ -177,6 +177,8 @@ class DownloadFormSubmitter {
         try {
             // Get the response content
             const html = await response.text();
+            console.log(html);
+            console.log(response.headers)
             const { document } = parseHTML(html);
     
             // First try to find the direct download link
@@ -240,7 +242,7 @@ class DownloadFormSubmitter {
     
             // If all methods fail, return the response URL
             console.warn('No download URL found in page, falling back to response URL');
-            return { url: response.url };
+            return { url: response.headers };
         } catch (error) {
             console.error('Error extracting download URL:', error);
             return { url: response.url };
