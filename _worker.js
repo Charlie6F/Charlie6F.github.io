@@ -19,6 +19,29 @@ class DownloadFormSubmitter {
     }
   }
 
+  // Add logging method
+  log(level, message) {
+    if (!this.verbose) return;
+    
+    const timestamp = new Date().toISOString();
+    const prefix = `[${timestamp}] [${level.toUpperCase()}]`;
+    
+    switch (level.toLowerCase()) {
+      case 'error':
+        console.error(`${prefix} ${message}`);
+        break;
+      case 'warning':
+        console.warn(`${prefix} ${message}`);
+        break;
+      case 'info':
+        console.log(`${prefix} ${message}`);
+        break;
+      default:
+        console.log(`${prefix} ${message}`);
+    }
+  }
+
+  // Rest of the methods remain the same
   extractFilename(url) {
     try {
       const parsedUrl = new URL(url);
@@ -62,9 +85,8 @@ class DownloadFormSubmitter {
         redirect: 'follow'
       };
 
-      // Add SSL verification bypass in dev mode
       if (this.devMode) {
-        fetchOptions.insecure = true;  // This tells fetch to ignore SSL errors
+        fetchOptions.insecure = true;
         this.log('info', 'SSL verification disabled for development');
       }
 
@@ -75,7 +97,6 @@ class DownloadFormSubmitter {
       } else {
         this.log('error', `Page fetch failed with status code: ${response.status}`);
         
-        // If SSL error occurs and we're not in dev mode, provide helpful message
         if (response.status === 495 || response.status === 496) {
           this.log('warning', 'SSL verification failed - try enabling development mode');
         }
@@ -85,7 +106,6 @@ class DownloadFormSubmitter {
     } catch (e) {
       this.log('error', `Page fetch failed: ${e.message}`);
       
-      // If it's an SSL error and we're not in dev mode, provide helpful message
       if (e.message.includes('SSL') || e.message.includes('certificate')) {
         this.log('warning', 'SSL verification failed - try enabling development mode');
       }
@@ -97,7 +117,6 @@ class DownloadFormSubmitter {
   async extractFormData(response) {
     try {
       const html = await response.text();
-      // Using regex instead of DOM parsing since CloudFlare Workers don't have DOM API
       const formMatch = html.match(/<form[^>]*action="([^"]*)"[^>]*>([\s\S]*?)<\/form>/i);
       
       if (!formMatch) {
@@ -109,7 +128,6 @@ class DownloadFormSubmitter {
       const formContent = formMatch[2];
       const formData = {};
       
-      // Extract input fields
       const inputRegex = /<input[^>]*name="([^"]*)"[^>]*value="([^"]*)"[^>]*>/g;
       let match;
       while ((match = inputRegex.exec(formContent)) !== null) {
@@ -175,7 +193,6 @@ class DownloadFormSubmitter {
         redirect: 'follow'
       };
 
-      // Add SSL verification bypass in dev mode
       if (this.devMode) {
         fetchOptions.insecure = true;
         this.log('info', 'SSL verification disabled for form submission');
@@ -200,7 +217,6 @@ class DownloadFormSubmitter {
       } else {
         this.log('error', `Form submission failed with status code: ${response.status}`);
         
-        // If SSL error occurs and we're not in dev mode, provide helpful message
         if (response.status === 495 || response.status === 496) {
           this.log('warning', 'SSL verification failed - try enabling development mode');
         }
@@ -210,7 +226,6 @@ class DownloadFormSubmitter {
     } catch (e) {
       this.log('error', `Request failed: ${e.message}`);
       
-      // If it's an SSL error and we're not in dev mode, provide helpful message
       if (e.message.includes('SSL') || e.message.includes('certificate')) {
         this.log('warning', 'SSL verification failed - try enabling development mode');
       }
@@ -219,6 +234,8 @@ class DownloadFormSubmitter {
     }
   }
 }
+
+export { DownloadFormSubmitter };
 
 
 const ALLOWED_ORIGINS = [
