@@ -39,6 +39,8 @@ class DownloadFormSubmitter {
         this.base_url = "https://downloadwella.com";
         this.current_url = null;
         this.filename = null;
+        this.maxRetries = 3; // Add retry limit
+        this.retryDelay = 1000; // 1 second delay between retries
     }
 
     extractFilename(url) {
@@ -72,6 +74,39 @@ class DownloadFormSubmitter {
         }
     }
 
+    async fetchWithRetry(url, options, retryCount = 0) {
+        try {
+            // Always set SSL options for CloudFlare
+            options.cf = {
+                ssl: {
+                    verifyMode: "none",
+                    rejectUnauthorized: false
+                }
+            };
+
+            const response = await fetch(url, options);
+
+            // Handle CloudFlare SSL errors
+            if (response.status === 526 || response.status === 525) {
+                if (retryCount < this.maxRetries) {
+                    logger.warning(`CloudFlare SSL error (${response.status}), retry attempt ${retryCount + 1}`);
+                    await new Promise(resolve => setTimeout(resolve, this.retryDelay));
+                    return this.fetchWithRetry(url, options, retryCount + 1);
+                }
+                throw new Error(`SSL verification failed after ${this.maxRetries} retries`);
+            }
+
+            return response;
+        } catch (error) {
+            if (retryCount < this.maxRetries) {
+                logger.warning(`Request failed, retry attempt ${retryCount + 1}: ${error.message}`);
+                await new Promise(resolve => setTimeout(resolve, this.retryDelay));
+                return this.fetchWithRetry(url, options, retryCount + 1);
+            }
+            throw error;
+        }
+    }
+
     async getPageContent(url) {
         try {
             if (this.verbose) {
@@ -85,26 +120,10 @@ class DownloadFormSubmitter {
 
             const fetchOptions = {
                 method: 'GET',
-                headers: this.headers,
-                cf: { // CloudFlare-specific options
-                    ssl: this.verify_ssl ? undefined : {
-                        verifyMode: "none",
-                        rejectUnauthorized: false
-                    }
-                }
+                headers: this.headers
             };
 
-            const response = await fetch(url, fetchOptions);
-
-            if (response.status === 526) {
-                // Handle CloudFlare SSL verification error
-                logger.warning("CloudFlare SSL verification failed, retrying with SSL verification disabled");
-                fetchOptions.cf.ssl = {
-                    verifyMode: "none",
-                    rejectUnauthorized: false
-                };
-                return await fetch(url, fetchOptions);
-            }
+            const response = await this.fetchWithRetry(url, fetchOptions);
 
             if (response.ok) {
                 return response;
@@ -190,7 +209,6 @@ class DownloadFormSubmitter {
                 logger.info("Waiting for form submission...");
             }
             
-            // Wait 2 seconds
             await new Promise(resolve => setTimeout(resolve, 2000));
 
             const submitUrl = new URL(formAction || '', this.base_url).href;
@@ -199,17 +217,11 @@ class DownloadFormSubmitter {
                 logger.info("Submitting form...");
             }
 
-            const response = await fetch(submitUrl, {
+            const response = await this.fetchWithRetry(submitUrl, {
                 method: 'POST',
                 headers: this.headers,
                 body: finalFormData.toString(),
-                redirect: 'follow',
-                cf: {
-                    ssl: this.verify_ssl ? undefined : {
-                        verifyMode: "none",
-                        rejectUnauthorized: false
-                    }
-                }
+                redirect: 'follow'
             });
 
             if (response.ok) {
@@ -225,8 +237,7 @@ class DownloadFormSubmitter {
                     file_id: fileId
                 };
             } else {
-                logger.error(`Form submission failed with status code: ${response.status}`);
-                return null;
+                throw new Error(`Form submission failed with status code: ${response.status}`);
             }
 
         } catch (e) {
@@ -354,6 +365,57 @@ const apiRoutes = {
             });
         }
     },
+};
+
+apiRoutes['/api/download'] = async (request) => {
+    const url = new URL(request.url);
+    const downloadUrl = url.searchParams.get('url');
+    const devMode = url.searchParams.get('dev') === 'true';
+    
+    if (!downloadUrl) {
+        return new Response(JSON.stringify({ error: 'Missing url parameter' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+        });
+    }
+
+    try {
+        const downloader = new DownloadFormSubmitter(false, devMode); // Always disable SSL verification
+        const result = await downloader.submitForm(downloadUrl);
+        
+        if (!result) {
+            throw new Error('Failed to get download URL');
+        }
+        
+        return new Response(JSON.stringify(result), {
+            headers: { 
+                'Content-Type': 'application/json',
+                ...(devMode && { 'X-Dev-Mode': 'true' })
+            }
+        });
+    } catch (error) {
+        console.error('Download error:', error);
+        
+        const errorResponse = {
+            error: 'Download failed',
+            details: error.message,
+            url: downloadUrl,
+            devMode: devMode,
+            retryAttempts: 3,
+            suggestion: error.message.includes('SSL') ? 
+                'SSL verification failed, but retries were attempted' : 
+                'Please try again later'
+        };
+        
+        return new Response(JSON.stringify(errorResponse), {
+            status: error.message.includes('SSL') ? 526 : 502,
+            headers: { 
+                'Content-Type': 'application/json',
+                'X-Error-Type': 'download_failed',
+                ...(devMode && { 'X-Dev-Mode': 'true' })
+            }
+        });
+    }
 };
 
 // Main worker
