@@ -148,6 +148,8 @@ class DownloadFormSubmitter {
             }
 
             const response = await fetch(submitUrl, fetchOptions);
+            console.log(response.text());
+            console.log(response.headers());
 
             if (response.status === 526 && this.devMode) {
                 console.warn('Cloudflare SSL verification failed on form submission, retrying with relaxed settings');
@@ -179,7 +181,7 @@ class DownloadFormSubmitter {
             // Get the response content
             const html = await response.text();
             console.log(html);
-            console.log(response.headers())
+            console.log(response.headers());
             const { document } = parseHTML(html);
     
             // First try to find the direct download link
@@ -208,7 +210,7 @@ class DownloadFormSubmitter {
                     if (this.verbose) {
                         console.log('Found download URL:', fullUrl);
                     }
-                    return { url: fullUrl };
+                    return { fullurl: fullUrl };
                 }
             }
     
@@ -243,10 +245,10 @@ class DownloadFormSubmitter {
     
             // If all methods fail, return the response URL
             console.warn('No download URL found in page, falling back to response URL');
-            return { url: response.headers()};
+            return { url: response.json};
         } catch (error) {
             console.error('Error extracting download URL:', error);
-            return { url: response.url };
+            return { url: response.text };
         }
     }
 }
