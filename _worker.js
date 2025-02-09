@@ -129,13 +129,13 @@ class DownloadFormSubmitter {
 
         const fetchOptions = {
           headers: this.headers,
-          redirect: 'follow'
+          redirect: 'follow',
+          // Always disable SSL verification in dev mode
+          ...(this.devMode && { 
+            insecure: true,
+            rejectUnauthorized: false
+          })
         };
-
-        if (this.devMode) {
-          fetchOptions.insecure = true;
-          this.log('info', 'SSL verification disabled for development');
-        }
 
         const response = await fetch(url, fetchOptions);
 
@@ -149,10 +149,9 @@ class DownloadFormSubmitter {
       } catch (e) {
         const errorInfo = this.classifyError(e.status || 0, e.message);
         
+        // If SSL error occurs and we're not in dev mode, throw error with clear message
         if (errorInfo.sslRelated && !this.devMode) {
-          this.log('warning', 'SSL verification failed - enabling development mode and retrying');
-          this.devMode = true;
-          return this.getPageContent(url);
+          throw new Error('SSL verification failed - please enable development mode');
         }
         
         throw e;
@@ -160,7 +159,6 @@ class DownloadFormSubmitter {
     });
   }
 
-  // Update the submitForm method to use the new error handling
   async submitForm(url) {
     try {
       this.current_url = url;
@@ -174,72 +172,65 @@ class DownloadFormSubmitter {
       const result = await this.retryWithExponentialBackoff(async () => {
         this.log('info', "Processing download page...");
 
-      if (!url.includes('downloadwella.com')) {
-        this.log('info', `Found direct url: ${url}`);
-        return { url: url };
-      }
+        if (!url.includes('downloadwella.com')) {
+          this.log('info', `Found direct url: ${url}`);
+          return { url: url };
+        }
 
-      const initialResponse = await this.getPageContent(url);
-      const [formData, formAction] = await this.extractFormData(initialResponse);
+        const initialResponse = await this.getPageContent(url);
+        const [formData, formAction] = await this.extractFormData(initialResponse);
 
-      const finalFormData = new URLSearchParams({
-        op: 'download2',
-        id: fileId,
-        rand: '',
-        referer: '',
-        method_free: 'Free Download',
-        method_premium: '',
-        ...formData
-      });
+        const finalFormData = new URLSearchParams({
+          op: 'download2',
+          id: fileId,
+          rand: '',
+          referer: '',
+          method_free: 'Free Download',
+          method_premium: '',
+          ...formData
+        });
 
-      this.headers['Origin'] = this.base_url;
-      this.headers['Referer'] = url;
-      this.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+        this.headers['Origin'] = this.base_url;
+        this.headers['Referer'] = url;
+        this.headers['Content-Type'] = 'application/x-www-form-urlencoded';
 
-      this.log('info', "Waiting for form submission...");
-      await new Promise(resolve => setTimeout(resolve, 2000));
+        this.log('info', "Waiting for form submission...");
+        await new Promise(resolve => setTimeout(resolve, 2000));
 
-      const submitUrl = new URL(formAction || '', this.base_url).href;
-      this.log('info', "Submitting form...");
-      
-      const fetchOptions = {
-        method: 'POST',
-        headers: this.headers,
-        body: finalFormData.toString(),
-        redirect: 'follow'
-      };
-
-      if (this.devMode) {
-        fetchOptions.insecure = true;
-        this.log('info', 'SSL verification disabled for form submission');
-      }
-
-      const response = await fetch(submitUrl, fetchOptions);
-
-      if (response.ok) {
-        const downloadUrl = response.url;
+        const submitUrl = new URL(formAction || '', this.base_url).href;
+        this.log('info', "Submitting form...");
         
-        if (downloadUrl) {
-          this.log('info', `Download url found: ${downloadUrl}`);
-          return {
-            url: downloadUrl,
-            filename: this.filename,
-            file_id: fileId
-          };
+        const fetchOptions = {
+          method: 'POST',
+          headers: this.headers,
+          body: finalFormData.toString(),
+          redirect: 'follow',
+          // Always disable SSL verification in dev mode
+          ...(this.devMode && { 
+            insecure: true,
+            rejectUnauthorized: false
+          })
+        };
+
+        const response = await fetch(submitUrl, fetchOptions);
+
+        if (response.ok) {
+          const downloadUrl = response.url;
+          
+          if (downloadUrl) {
+            this.log('info', `Download url found: ${downloadUrl}`);
+            return {
+              url: downloadUrl,
+              filename: this.filename,
+              file_id: fileId
+            };
+          } else {
+            throw new Error("Download URL could not be extracted");
+          }
         } else {
-          this.log('error', "Download URL could not be extracted");
-          return null;
+          throw new Error(`Form submission failed with status code: ${response.status}`);
         }
-      } else {
-        this.log('error', `Form submission failed with status code: ${response.status}`);
-        
-        if (response.status === 495 || response.status === 496) {
-          this.log('warning', 'SSL verification failed - try enabling development mode');
-        }
-        
-        return null;
-      }
-    });
+      });
 
       return result;
     } catch (e) {
