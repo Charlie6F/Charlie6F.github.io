@@ -22,7 +22,6 @@ class DownloadFormSubmitter {
     this.retryCount = 0;
     this.maxRetries = 3;
     this.retryDelay = 2000;
-  }
 
     if (devMode) {
       this.log('warning', "Development mode enabled - SSL verification disabled");
