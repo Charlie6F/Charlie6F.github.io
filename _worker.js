@@ -309,6 +309,68 @@ class DownloadFormSubmitter {
       };
     }
   }
+  
+  extractFilename(url) {
+    try {
+      const parsedUrl = new URL(url);
+      const pathName = decodeURIComponent(parsedUrl.pathname);
+      const filename = pathName.split('/').pop();
+      return filename.endsWith('.html') ? filename.slice(0, -5) : filename;
+    } catch (e) {
+      this.log('error', `Error extracting filename: ${e.message}`);
+      return "downloaded_file";
+    }
+  }
+
+  extractFileId(url) {
+    try {
+      const parsedUrl = new URL(url);
+      const pathName = parsedUrl.pathname;
+      const match = pathName.match(/\/([a-zA-Z0-9]+)(?:\/|$)/);
+      if (match) {
+        const fileId = match[1];
+        this.log('info', `File ID: ${fileId}`);
+        return fileId;
+      }
+      this.log('error', "Could not extract file ID from URL");
+      return null;
+    } catch (e) {
+      this.log('error', `Error extracting file ID: ${e.message}`);
+      return null;
+    }
+  }
+  
+  async extractFormData(response) {
+    try {
+      const html = await response.text();
+      const formMatch = html.match(/<form[^>]*action="([^"]*)"[^>]*>([\s\S]*?)<\/form>/i);
+      
+      if (!formMatch) {
+        this.log('warning', "No form found in page");
+        return [null, null];
+      }
+
+      const actionUrl = formMatch[1];
+      const formContent = formMatch[2];
+      const formData = {};
+      
+      const inputRegex = /<input[^>]*name="([^"]*)"[^>]*value="([^"]*)"[^>]*>/g;
+      let match;
+      while ((match = inputRegex.exec(formContent)) !== null) {
+        formData[match[1]] = match[2];
+      }
+
+      if (Object.keys(formData).length > 0) {
+        return [formData, actionUrl];
+      }
+
+      this.log('warning', "No form data found in page");
+      return [null, null];
+    } catch (e) {
+      this.log('error', `Error extracting form data: ${e.message}`);
+      return [null, null];
+    }
+  }
 }
 
 export { DownloadFormSubmitter };
