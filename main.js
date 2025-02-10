@@ -10,7 +10,7 @@ debug.enable('orchestrator');
 
 const app = express();
 const HOSTNAME = '0.0.0.0';
-const port = 8080;
+const port = 1000;
 
 // CORS configuration
 const corsOptions = {
