@@ -1,258 +1,5 @@
 import { parseHTML } from 'linkedom';
 
-class DownloadFormSubmitter {
-    constructor(verbose = false, devMode = false) {
-        this.verbose = verbose;
-        this.devMode = devMode;
-        this.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Connection': 'keep-alive'
-        };
-        this.base_url = "https://downloadwella.com";
-        
-        if (this.devMode) {
-            console.warn('⚠️ Running in development mode with relaxed SSL verification');
-        }
-    }
-
-    extractFileId(url) {
-        try {
-            const parsedUrl = new URL(url);
-            const pathName = parsedUrl.pathname;
-            const match = pathName.match(/\/([a-zA-Z0-9]+)(?:\/|$)/);
-            return match ? match[1] : null;
-        } catch (e) {
-            console.error(`Error extracting file ID: ${e.message}`);
-            return null;
-        }
-    }
-
-    async getPageContent(url) {
-        //if (!url.includes('downloadwella.com')) {
-            //return { url };
-        //}
-
-        const fetchOptions = {
-            headers: this.headers,
-            method: 'GET'
-        };
-
-        if (this.devMode) {
-            fetchOptions.cf = {
-                ssl: false,
-                rejectUnauthorized: false
-            };
-        }
-
-        try {
-            const response = await fetch(url, fetchOptions);
-            
-            if (response.status === 526 && this.devMode) {
-                console.warn('Cloudflare SSL verification failed, retrying with relaxed settings');
-                const retryResponse = await fetch(url, {
-                    ...fetchOptions,
-                    cf: {
-                        ...fetchOptions.cf,
-                        tlsVersion: 'TLSv1.2',
-                        ciphers: ['ECDHE-ECDSA-AES128-GCM-SHA256'],
-                        minTlsVersion: '1.0'
-                    }
-                });
-                return retryResponse;
-            }
-
-            if (response.ok) {
-                return response;
-            }
-            throw new Error(`Request failed with status ${response.status}`);
-        } catch (error) {
-            if (this.verbose) {
-                console.error('Fetch error:', error);
-            }
-            throw error;
-        }
-    }
-
-    extractFormData(htmlContent) {
-        try {
-            const { document } = parseHTML(htmlContent);
-            const form = document.querySelector('form');
-            const formData = {};
-            
-            if (form) {
-                for (const input of form.querySelectorAll('input')) {
-                    const name = input.getAttribute('name');
-                    const value = input.getAttribute('value') || '';
-                    if (name) formData[name] = value;
-                }
-                return [formData, form.getAttribute('action')];
-            }
-            return [null, null];
-        } catch (e) {
-            console.error(`Error extracting form data: ${e.message}`);
-            return [null, null];
-        }
-    }
-
-    async submitForm(url) {
-        try {
-            const fileId = this.extractFileId(url);
-            if (!fileId) {
-                throw new Error("Invalid URL format");
-            }
-
-            if (!url.includes('downloadwella.com')) {
-                return { url };
-            }
-
-            const initialResponse = await this.getPageContent(url);
-            const htmlContent = await initialResponse.text();
-            const [formData, formAction] = this.extractFormData(htmlContent);
-
-            const finalFormData = {
-                op: 'download2',
-                id: fileId,
-                rand: '',
-                referer: '',
-                method_free: 'Free Download',
-                method_premium: '',
-                ...formData
-            };
-
-            // Wait for 2 seconds like the direct download version
-            await new Promise(resolve => setTimeout(resolve, 2000));
-
-            const submitUrl = new URL(formAction || '', this.base_url).href;
-            const fetchOptions = {
-                method: 'POST',
-                headers: {
-                    ...this.headers,
-                    'Origin': this.base_url,
-                    'Referer': url,
-                    'Content-Type': 'application/x-www-form-urlencoded'
-                },
-                body: new URLSearchParams(finalFormData).toString(),
-                redirect: 'follow'
-            };
-
-            if (this.devMode) {
-                fetchOptions.cf = {
-                    ssl: false,
-                    rejectUnauthorized: false,
-                    tlsVersion: 'TLSv1.2',
-                    ciphers: ['ECDHE-ECDSA-AES128-GCM-SHA256'],
-                    minTlsVersion: '1.0'
-                };
-            }
-
-            const response = await fetch(submitUrl, fetchOptions);
-            console.log(response.text());
-            console.log(response.headers());
-
-            if (response.status === 526 && this.devMode) {
-                console.warn('Cloudflare SSL verification failed on form submission, retrying with relaxed settings');
-                const retryResponse = await fetch(submitUrl, {
-                    ...fetchOptions,
-                    cf: {
-                        ...fetchOptions.cf,
-                        strictSSL: false
-                    }
-                });
-                console.log(retryResponse.text());
-                return this.extractDownloadUrl(retryResponse);
-            }
-
-            if (response.ok) {
-                return this.extractDownloadUrl(response);
-            }
-            throw new Error(`Form submission failed with status ${response.status}`);
-        } catch (e) {
-            if (this.verbose) {
-                console.error(`Request failed: ${e.message}`);
-            }
-            throw e;
-        }
-    }
-
-    async extractDownloadUrl(response) {
-        try {
-            // Get the response content
-            const html = await response.text();
-            console.log(html);
-            console.log(response.headers());
-            const { document } = parseHTML(html);
-    
-            // First try to find the direct download link
-            const downloadLinks = [
-                // Direct download button/link
-                ...document.querySelectorAll('a[href*="downloadwella.com/d/"]'),
-                ...document.querySelectorAll('a[href*="dweds"]'),
-                // Backup selectors for different URL patterns
-                ...document.querySelectorAll('a[href*="/d/"]'),
-                ...document.querySelectorAll('a[href$=".mkv"]'),
-                ...document.querySelectorAll('a[href$=".mp4"]'),
-                ...document.querySelectorAll('a[href$=".avi"]')
-            ];
-    
-            for (const link of downloadLinks) {
-                const href = link.getAttribute('href');
-                if (href && (
-                    href.includes('/d/') || 
-                    href.includes('dweds') || 
-                    href.endsWith('.mkv') || 
-                    href.endsWith('.mp4') || 
-                    href.endsWith('.avi')
-                )) {
-                    // Ensure we have a full URL
-                    const fullUrl = href.startsWith('http') ? href : new URL(href, this.base_url).href;
-                    if (this.verbose) {
-                        console.log('Found download URL:', fullUrl);
-                    }
-                    return { fullurl: fullUrl };
-                }
-            }
-    
-            // Fallback to content-disposition header
-            const contentDisposition = response.headers.get('content-disposition');
-            if (contentDisposition) {
-                return { url: response.url };
-            }
-    
-            // If we still haven't found a URL, try parsing any iframe sources
-            const iframes = document.querySelectorAll('iframe');
-            for (const iframe of iframes) {
-                const src = iframe.getAttribute('src');
-                if (src && (src.includes('/d/') || src.includes('dweds'))) {
-                    return { url: new URL(src, this.base_url).href };
-                }
-            }
-    
-            // Last resort: Try to find any link that looks like a download link
-            const allLinks = document.querySelectorAll('a[href]');
-            for (const link of allLinks) {
-                const href = link.getAttribute('href');
-                if (href && (
-                    link.textContent.toLowerCase().includes('download') ||
-                    href.includes('download') ||
-                    href.includes('/d/') ||
-                    href.includes('dweds')
-                )) {
-                    return { url: new URL(href, this.base_url).href };
-                }
-            }
-    
-            // If all methods fail, return the response URL
-            console.warn('No download URL found in page, falling back to response URL');
-            return { url: response.json};
-        } catch (error) {
-            console.error('Error extracting download URL:', error);
-            return { url: response.text };
-        }
-    }
-}
-
 const ALLOWED_ORIGINS = [
     'https://nexu.charles06f.workers.dev',
     'https://nexu.name.ng',
@@ -264,6 +11,210 @@ const ALLOWED_ORIGINS = [
     'https://ominous-space-fishstick-pjgvrxjqjwrjh9476-8080.app.github.dev',
     'https://ominous-space-fishstick-pjgvrxjqjwrjh9476-9564.app.github.dev'
 ];
+
+// Adapted DownloadFormSubmitter for CloudFlare Workers
+class DownloadFormSubmitter {
+    constructor(verify_ssl = false, verbose = false) {
+        this.verify_ssl = verify_ssl;
+        this.verbose = verbose;
+        
+        if (!verify_ssl && verbose) {
+            console.warn("SSL verification disabled");
+        }
+
+        this.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Connection': 'keep-alive'
+        };
+
+        this.base_url = "https://downloadwella.com";
+        this.current_url = null;
+        this.filename = null;
+    }
+
+    extractFilename(url) {
+        try {
+            const parsedUrl = new URL(url);
+            const pathName = decodeURIComponent(parsedUrl.pathname);
+            const filename = pathName.split('/').pop();
+            return filename.endsWith('.html') ? filename.slice(0, -5) : filename;
+        } catch (e) {
+            console.error(`Error extracting filename: ${e.message}`);
+            return "downloaded_file";
+        }
+    }
+
+    extractFileId(url) {
+        try {
+            const parsedUrl = new URL(url);
+            const pathName = parsedUrl.pathname;
+            const match = pathName.match(/\/([a-zA-Z0-9]+)(?:\/|$)/);
+            if (match) {
+                const fileId = match[1];
+                if (this.verbose) {
+                    console.log(`File ID: ${fileId}`);
+                }
+                return fileId;
+            }
+            console.error("Could not extract file ID from URL");
+            return null;
+        } catch (e) {
+            console.error(`Error extracting file ID: ${e.message}`);
+            return null;
+        }
+    }
+
+    async getPageContent(url) {
+        try {
+            if (this.verbose) {
+                console.log(`Fetching page: ${url}`);
+            }
+            if (!url.includes('downloadwella.com')) {
+                console.log(`Found direct url: ${url}`);
+                return url;
+            }
+
+            const fetchOptions = {
+                method: 'GET',
+                headers: this.headers,
+            };
+
+            if (!this.verify_ssl) {
+                fetchOptions.cf = { insecureSkipVerify: true };
+            }
+
+            const response = await fetch(url, fetchOptions);
+
+            if (response.ok) {
+                return response;
+            } else {
+                console.error(`Page fetch failed with status code: ${response.status}`);
+                throw new Error(`Request failed with status code ${response.status}`);
+            }
+        } catch (e) {
+            console.error(`Page fetch failed: ${e.message}`);
+            throw e;
+        }
+    }
+
+    extractFormData(htmlContent) {
+        try {
+            const dom = parseHTML(htmlContent).document;
+            const form = dom.querySelector('form');
+            const formData = {};
+            let actionUrl = null;
+
+            if (form) {
+                if (this.verbose) {
+                    console.log("Form found");
+                }
+                for (const inputTag of form.querySelectorAll('input')) {
+                    const name = inputTag.getAttribute('name');
+                    const value = inputTag.getAttribute('value') || '';
+                    if (name) {
+                        formData[name] = value;
+                    }
+                }
+                actionUrl = form.getAttribute('action');
+                if (Object.keys(formData).length > 0) {
+                    return [formData, actionUrl];
+                }
+            }
+            console.warn("No form data found in page");
+            return [null, null];
+        } catch (e) {
+            console.error(`Error extracting form data: ${e.message}`);
+            return [null, null];
+        }
+    }
+
+    async submitForm(url) {
+        try {
+            this.current_url = url;
+            this.filename = this.extractFilename(url);
+            const fileId = this.extractFileId(url);
+
+            if (!fileId) {
+                throw new Error("Invalid URL format - could not extract file ID");
+            }
+            if (this.verbose) {
+                console.log("Processing download page...");
+            }
+
+            if (!url.includes('downloadwella.com')) {
+                console.log(`Found direct url: ${url}`);
+                return { "url": url };
+            }
+
+            const initialResponse = await this.getPageContent(url);
+            const htmlContent = await initialResponse.text();
+            const [formData, formAction] = this.extractFormData(htmlContent);
+
+            const finalFormData = new URLSearchParams({
+                op: 'download2',
+                id: fileId,
+                rand: '',
+                referer: '',
+                method_free: 'Free Download',
+                method_premium: ''
+            });
+
+            if (formData) {
+                Object.entries(formData).forEach(([key, value]) => {
+                    finalFormData.set(key, value);
+                });
+            }
+
+            this.headers['Origin'] = this.base_url;
+            this.headers['Referer'] = url;
+            this.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+
+            if (this.verbose) {
+                console.log("Waiting for form submission...");
+            }
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            const submitUrl = new URL(formAction || '', this.base_url).href;
+            if (this.verbose) {
+                console.log("Submitting form...");
+            }
+
+            const fetchOptions = {
+                method: 'POST',
+                headers: this.headers,
+                body: finalFormData.toString(),
+                redirect: 'follow'
+            };
+
+            if (!this.verify_ssl) {
+                fetchOptions.cf = { insecureSkipVerify: true };
+            }
+
+            const response = await fetch(submitUrl, fetchOptions);
+
+            if (response.ok) {
+                const downloadUrl = response.url;
+                if (this.verbose) {
+                    console.log(`Download url found: ${downloadUrl}`);
+                }
+
+                return {
+                    url: downloadUrl,
+                    filename: this.filename,
+                    file_id: fileId
+                };
+            } else {
+                console.error(`Form submission failed with status code: ${response.status}`);
+                return null;
+            }
+        } catch (e) {
+            console.error(`Request failed: ${e.message}`);
+            throw e;
+        }
+    }
+}
 
 // API Route handlers
 const apiRoutes = {
@@ -347,7 +298,7 @@ const apiRoutes = {
         }
 
         try {
-            const downloader = new DownloadFormSubmitter(true, devMode);
+            const downloader = new DownloadFormSubmitter(!devMode, devMode);
             const result = await downloader.submitForm(downloadUrl);
             return new Response(JSON.stringify(result), {
                 headers: { 
@@ -358,19 +309,24 @@ const apiRoutes = {
         } catch (error) {
             console.error('Download error:', error);
             
-            const errorMessage = {
+            const errorResponse = {
                 error: 'Download failed',
-                details: error.message,
-                type: error.name,
+                details: error.details || error.message,
+                errorInfo: error.errorInfo,
+                type: error.type,
                 url: downloadUrl,
-                devMode: devMode
+                devMode: devMode,
+                retryAttempts: error.retryAttempts || 0,
+                suggestion: error.errorInfo?.sslRelated ? 
+                    'Try enabling development mode to bypass SSL verification' : 
+                    'Please try again later'
             };
             
-            return new Response(JSON.stringify(errorMessage), {
-                status: 502,
+            return new Response(JSON.stringify(errorResponse), {
+                status: error.errorInfo?.code || 502,
                 headers: { 
                     'Content-Type': 'application/json',
-                    'X-Error-Type': 'download_failed',
+                    'X-Error-Type': error.errorInfo?.type || 'download_failed',
                     ...(devMode && { 'X-Dev-Mode': 'true' })
                 }
             });
@@ -450,4 +406,4 @@ export default {
             });
         }
     }
-};
+}; 
