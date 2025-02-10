@@ -3,7 +3,10 @@ const express = require('express');
 const proxy = require('express-http-proxy');
 const { spawn } = require('child_process');
 const path = require('path');
-const logging = require('debug')('orchestrator');
+const debug = require('debug');
+const logging = debug('orchestrator');
+// Enable debug for both orchestrator and download-server
+debug.enable('orchestrator,download-server');
 
 const secure= true
 const app = express();
