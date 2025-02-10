@@ -280,4 +280,4 @@ if (require.main === module) {
 }
 
 
-module.exports = { getDirectUrl };
+module.exports = { getDirectUrl, DownloadFormSubmitter };

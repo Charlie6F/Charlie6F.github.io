@@ -1,97 +1,18 @@
-const cors = require('cors');
 const express = require('express');
-const proxy = require('express-http-proxy');
-const { spawn } = require('child_process');
-const path = require('path');
+const cors = require('cors');
+const { URL } = require('url');
 const debug = require('debug');
+const { DownloadFormSubmitter } = require('./direct_download_url_fetcher');
 const logging = debug('orchestrator');
-// Enable debug for both orchestrator and download-server
-debug.enable('orchestrator,download-server');
 
-const secure= true
+// Enable debug for orchestrator
+debug.enable('orchestrator');
+
 const app = express();
 const HOSTNAME = '0.0.0.0';
-const mainPort = 8080;
+const port = 8080;
 
-const serverPaths = {
-    //secureProxyServer: path.join(__dirname, 'Image_Provider_Server', 'Secure_image_proxy_server.js'),
-    //proxyServer: path.join(__dirname, 'Image_Provider_Server', 'proxy_server_images.js'),
-    //appServer: path.join(__dirname, 'YouTube_Trailer_Server', 'app.js'),
-    downloadServer: path.join(__dirname, 'download_server', 'server.js'),
-};
-
-const serverPorts = {
-    secureProxyServer:8010,
-    proxyServer: 8010,
-    appServer: 5000,
-    downloadServer: 8011,
-};
-
-const servers = {};
-
-function startServer(name, scriptPath, port) {
-    logging(`Starting ${name} on port ${port}...`);
-    try {
-        // Verify the file exists
-        require.resolve(scriptPath);
-        const serverProcess = spawn('node', [scriptPath]);
-        
-        serverProcess.stdout.on('data', (data) => {
-            logging(`${name} stdout: ${data}`);
-        });
-
-        serverProcess.stderr.on('data', (data) => {
-            logging(`${name} stderr: ${data}`);
-            // Log actual error messages from the child process
-            console.error(`${name} error:`, data.toString());
-        });
-
-        serverProcess.on('close', (code) => {
-            logging(`${name} process exited with code ${code}`);
-            delete servers[name];
-        });
-
-        serverProcess.on('error', (err) => {
-            logging(`Failed to start ${name} process: ${err}`);
-            console.error(`${name} spawn error:`, err);
-        });
-
-        servers[name] = serverProcess;
-        logging(`${name} started successfully.`);
-    } catch (error) {
-        logging(`Failed to resolve script path for ${name}: ${error.message}`);
-        console.error(`Failed to start ${name}:`, error);
-    }
-}
-
-function stopServer(name) {
-    if (servers[name]) {
-        logging(`Stopping ${name}...`);
-        servers[name].kill('SIGINT');
-        delete servers[name];
-        logging(`${name} stopped.`);
-    } else {
-        logging(`No server with name: ${name}`);
-    }
-}
-
-function stopAllServers() {
-    for (const name in servers) {
-        stopServer(name);
-    }
-}
-
-// Start all servers
-//if (!secure)
-    //startServer('proxyServer', serverPaths.proxyServer, serverPorts.proxyServer);
-    
-// if (secure)
-    //startServer('secureProxyServer', serverPaths.secureProxyServer, serverPorts.secureProxyServer);
-        
-//startServer('appServer', serverPaths.appServer, serverPorts.appServer);
-startServer('downloadServer', serverPaths.downloadServer, serverPorts.downloadServer);
-
-// Update corsOptions to include bore.pub with port
+// CORS configuration
 const corsOptions = {
     origin: [
         'https://servers-5407.onrender.com',
@@ -111,49 +32,62 @@ const corsOptions = {
     exposedHeaders: ['ngrok-skip-browser-warning']
 };
 
-// CORS options
+// Apply CORS middleware
 app.use(cors(corsOptions));
 
-// Configure proxy routes
-//if (!secure)
-    //app.use('/image-proxy', proxy(`http://${HOSTNAME}:${serverPorts.proxyServer}`));
-    
-//if (secure)
-    //app.use('/image-proxy', proxy(`http://${HOSTNAME}:${serverPorts.secureProxyServer}`));
-    
-// In main.js, update the proxy configurations:
-//app.use(['/youtube-api'], proxy(`http://${HOSTNAME}:${serverPorts.appServer}`, {
-    //proxyReqPathResolver: function (req) {
-        //return '/search-route' + req.url;
-    //},
-    //proxyErrorHandler: function(err, res, next) {
-        //logging('YouTube API Proxy Error:', err);
-        //next(err);
-    //}
-//}));
+// Create a single instance of DownloadFormSubmitter to be reused
+const downloader = new DownloadFormSubmitter(false, true);
 
-
-app.use(['/','/download'], proxy(`http://${HOSTNAME}:${serverPorts.downloadServer}`,{
-    proxyErrorHandler: function(err, res, next) {
-        logging('Download Server Proxy Error:', err);
-        next(err);
+app.get(['/', '/download'], async (req, res) => {
+    const url = req.query.url;
+    logging(`Received request for: ${url}`);
+    
+    if (!url) {
+        return res.status(400).json({ error: 'Missing "url" parameter' });
     }
-}));
 
-// Start the main express server to listen for request
-app.listen(mainPort, HOSTNAME => {
-    logging(`Main server listening on port ${mainPort}`);
+    try {
+        new URL(url);
+    } catch (error) {
+        return res.status(400).json({ error: 'Invalid "url" parameter', message: error.message });
+    }
+
+    try {
+        const result = await downloader.submitForm(url);
+        if (result && result.url) {
+            res.json({ url: result.url });
+            logging(`Successfully processed URL and got a download url`);
+        } else {
+            res.status(500).json({ error: 'Failed to get direct download URL' });
+            logging(`Failed to get direct download URL`);
+        }
+    } catch (error) {
+        logging("Error processing request:", error);
+        let errorMessage = "Internal server error";
+        if (error instanceof Error) {
+            errorMessage = error.message;
+        }
+        res.status(500).json({ error: "Internal server error", message: errorMessage });
+    }
 });
 
-// Handle process termination (e.g., Ctrl+C)
+// Start the express server
+app.listen(port, HOSTNAME, (error) => {
+    if (!error) {
+        logging(`Server listening at http://${HOSTNAME}:${port}`);
+    } else {
+        logging(`Server error: ${error}`);
+    }
+});
+
+// Handle process termination
 process.on('SIGINT', () => {
-    logging('Orchestrator shutting down...');
-    stopAllServers();
+    logging('Server shutting down...');
     process.exit(0);
 });
 
 process.on('uncaughtException', (err) => {
     logging('Uncaught exception:', err);
-    stopAllServers();
+    console.error('Uncaught exception:', err);
     process.exit(1);
 });

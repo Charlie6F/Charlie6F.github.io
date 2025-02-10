@@ -1,10 +1,16 @@
 const express = require('express');
 const cors = require('cors');
-const { getDirectUrl } = require('./direct_download_url_fetcher');
-const logging = require('debug')('download-server');
+const { URL } = require('url');
+const debug = require('debug');
+const { DownloadFormSubmitter } = require('./direct_download_url_fetcher');
+const logging = debug('orchestrator');
+
+// Enable debug for orchestrator
+debug.enable('orchestrator');
+
 const app = express();
-const port = 8011;
 const HOSTNAME = '0.0.0.0';
+const port = 8080;
 
 // CORS configuration
 const corsOptions = {
@@ -29,9 +35,13 @@ const corsOptions = {
 // Apply CORS middleware
 app.use(cors(corsOptions));
 
-app.get(['/','/download'], async (req, res) => {
+// Create a single instance of DownloadFormSubmitter to be reused
+const downloader = new DownloadFormSubmitter(false, true);
+
+app.get(['/', '/download'], async (req, res) => {
     const url = req.query.url;
-    logging(`Received request for: ${url}`)
+    logging(`Received request for: ${url}`);
+    
     if (!url) {
         return res.status(400).json({ error: 'Missing "url" parameter' });
     }
@@ -43,13 +53,13 @@ app.get(['/','/download'], async (req, res) => {
     }
 
     try {
-        const directUrl = await getDirectUrl(url, true);
-        if (directUrl) {
-            res.json({ url: directUrl });
-            logging(`Successfully processed URL and got a download url`)
+        const result = await downloader.submitForm(url);
+        if (result && result.url) {
+            res.json({ url: result.url });
+            logging(`Successfully processed URL and got a download url`);
         } else {
             res.status(500).json({ error: 'Failed to get direct download URL' });
-            logging(`Failed to get direct download URL`)
+            logging(`Failed to get direct download URL`);
         }
     } catch (error) {
         logging("Error processing request:", error);
@@ -57,14 +67,27 @@ app.get(['/','/download'], async (req, res) => {
         if (error instanceof Error) {
             errorMessage = error.message;
         }
-        res.status(500).json({ error: "Internal server error", message: errorMessage })
+        res.status(500).json({ error: "Internal server error", message: errorMessage });
     }
 });
 
+// Start the express server
 app.listen(port, HOSTNAME, (error) => {
-    if (!error)
+    if (!error) {
         logging(`Server listening at http://${HOSTNAME}:${port}`);
-    else
-        logging(`Server.js error: ${error}`);
-        
-});        
+    } else {
+        logging(`Server error: ${error}`);
+    }
+});
+
+// Handle process termination
+process.on('SIGINT', () => {
+    logging('Server shutting down...');
+    process.exit(0);
+});
+
+process.on('uncaughtException', (err) => {
+    logging('Uncaught exception:', err);
+    console.error('Uncaught exception:', err);
+    process.exit(1);
+});
