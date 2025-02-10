@@ -8,7 +8,17 @@ const HOSTNAME = '0.0.0.0';
 
 // CORS configuration
 const corsOptions = {
-    origin: ['bore.pub', 'http://bore.pub:7359','http://bore.pub:8133', 'http://bore.pub:7259', 'http://localhost:8080', 'http://bore.pub:8020', 'https://nkiri.com', 'https://optimum-current-hawk.ngrok-free.app', 'https://charlie6f.github.io', 'http://localhost:8000','https://ominous-space-fishstick-pjgvrxjqjwrjh9476-8080.app.github.dev','https://ominous-space-fishstick-pjgvrxjqjwrjh9476-9564.app.github.dev',],
+    origin: [
+        'https://servers-5407.onrender.com',
+        'https://nkiri.com', 
+        'https://optimum-current-hawk.ngrok-free.app',
+        'https://charlie6f.github.io',
+        'http://localhost:8000',
+        'http://localhost:8551',
+        'http://bore.pub:8020',
+        'http://bore.pub:7359',
+        'https://ominous-space-fishstick-pjgvrxjqjwrjh9476-8080.app.github.dev',
+    ],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
     optionsSuccessStatus: 204,

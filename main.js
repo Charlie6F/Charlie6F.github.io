@@ -94,9 +94,7 @@ startServer('downloadServer', serverPaths.downloadServer, serverPorts.downloadSe
 // Update corsOptions to include bore.pub with port
 const corsOptions = {
     origin: [
-        'https://bore.pub',
-        'http://bore.pub',
-        /\.bore\.pub$/,  // This will allow any subdomain of bore.pub
+        'https://servers-5407.onrender.com',
         'https://nkiri.com', 
         'https://optimum-current-hawk.ngrok-free.app',
         'https://charlie6f.github.io',
@@ -105,7 +103,6 @@ const corsOptions = {
         'http://bore.pub:8020',
         'http://bore.pub:7359',
         'https://ominous-space-fishstick-pjgvrxjqjwrjh9476-8080.app.github.dev',
-        'http://bore.pub:8133',
     ],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
